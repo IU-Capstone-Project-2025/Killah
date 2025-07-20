@@ -112,6 +112,11 @@ class CaretUICoordinator: ObservableObject {
                 self?.isProcessingAudio = isProcessing
             }
             .store(in: &cancellables)
+        
+        // Bind AudioEngine's onTranscriptionComplete to generate suggestions
+        audioEngine.onTranscriptionComplete = { [weak self] transcription in
+            self?.generateFromAudioTranscription(transcription)
+        }
     }
 
     func updateCaretPosition(for textView: NSTextView, at charIndex: Int? = nil) {
@@ -263,6 +268,8 @@ class CaretUICoordinator: ObservableObject {
             finalPrompt = promptText
         }
         
+        promptText = ""
+        
         llmEngine.startEngine(for: "embeddings")
         let checkInterval: TimeInterval = 0.1
         let maxAttempts = 50
@@ -299,6 +306,53 @@ class CaretUICoordinator: ObservableObject {
                     }
                 }
             )
+        }
+    }
+    
+    func generateFromAudioTranscription(_ transcription: String) {
+        guard !transcription.isEmpty else {
+            print("⚠️ Empty transcription, skipping generation")
+            isGenerating = false
+            return
+        }
+        isGenerating = true
+        
+        llmEngine.startEngine(for: "embeddings")
+        let checkInterval: TimeInterval = 0.1
+        let maxAttempts = 50
+        var attempts = 0
+
+        // Wait for the Python script to be ready
+        while self.llmEngine.getRunnerState(for: "embeddings") != .running && attempts < maxAttempts {
+            Thread.sleep(forTimeInterval: checkInterval)
+            attempts += 1
+        }
+
+        // Check if the engine started successfully
+        if self.llmEngine.getRunnerState(for: "embeddings") == .running {
+            llmEngine.generateSuggestion(
+                for: "embeddings",
+                prompt: transcription,
+                isFromCaret: false,
+                tokenStreamCallback: { token in
+                    DispatchQueue.main.async {
+                        print("Audio transcription embeddings token received: \(token.prefix(100))")
+                    }
+                },
+                onComplete: { [weak self] result in
+                    guard let self = self else { return }
+                    switch result {
+                    case .success(let embeddingsJson):
+                        self.processEmbeddings(embeddingsJson)
+                    case .failure(let error):
+                        print("Error generating embeddings from audio transcription: \(error)")
+                        self.isGenerating = false
+                    }
+                }
+            )
+        } else {
+            print("❌ embeddings.py failed to reach running state after \(Double(maxAttempts) * checkInterval) seconds")
+            self.isGenerating = false
         }
     }
     

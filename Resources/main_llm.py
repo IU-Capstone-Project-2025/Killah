@@ -33,6 +33,7 @@ class ModelProxy:
             "stream": stream
         }
         if lora_adapter:
+            print("Applying LoRA", flush=True)
             payload["lora_adapters"] = [{"path": lora_adapter, "scale": 1.0}]
         if stream:
             response = requests.post(f"{self.server_url}/completion", json=payload, stream=True)

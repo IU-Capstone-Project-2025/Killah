@@ -44,7 +44,12 @@ def initialize_model():
         print("Model server did not start within timeout.", file=sys.stderr, flush=True)
         return None
 
-def stream_from_embeddings_and_prompt(model, embeddings=None, embeddings_type=None, prompt_text=""):
+def stream_from_embeddings_and_prompt(model, embeddings=None, embeddings_type=None, prompt_text="", lora_adapter=None):
+    if embeddings_type == "transcription":
+        # Directly yield the transcription text
+        yield prompt_text
+        return
+
     base_prompt = "<start_of_turn>user\n"
     if embeddings is not None and embeddings_type:
         token = "[AUDIO]" if embeddings_type == "projected_audio_embeds" else "[TEXT]"
@@ -57,7 +62,8 @@ def stream_from_embeddings_and_prompt(model, embeddings=None, embeddings_type=No
         max_tokens=10,
         temperature=0.8,
         min_p=0.1,
-        stream=True
+        stream=True,
+        lora_adapter=lora_adapter
     )
     
     buffer = ""
@@ -84,7 +90,7 @@ if __name__ == "__main__":
     model = initialize_model()
     if model:
         print("READY", flush=True)
-
+    lora_adapter = "lora/rewriting_lora_f16.gguf"
     while True:
         readable, _, _ = select.select([sys.stdin], [], [], 1.0)
         if readable:
@@ -97,17 +103,22 @@ if __name__ == "__main__":
             prompt = line
             if "|||" in line:
                 parts = line.split("|||", 1)
-                embeddings_json = parts[0].strip()
+                result_json = parts[0].strip()
                 prompt = parts[1].strip()
                 try:
-                    data = json.loads(embeddings_json)
+                    data = json.loads(result_json)
                     embeddings_type = data.get("type")
-                    embeddings = torch.tensor(data.get("embeddings"), dtype=torch.float32)
-                    print(f"Received embeddings of type: {embeddings_type}, shape: {embeddings.shape}", file=sys.stderr, flush=True)
+                    if embeddings_type == "transcription":
+                        print(f"Received transcription: {data.get('text')}", file=sys.stderr, flush=True)
+                        embeddings = None  # No embeddings for transcription
+                        prompt = data.get("text", "")
+                    else:
+                        embeddings = torch.tensor(data.get("embeddings"), dtype=torch.float32)
+                        print(f"Received embeddings of type: {embeddings_type}, shape: {embeddings.shape}", file=sys.stderr, flush=True)
                 except json.JSONDecodeError as e:
-                    print(f"Error parsing embeddings JSON: {e}", file=sys.stderr, flush=True)
+                    print(f"Error parsing result JSON: {e}", file=sys.stderr, flush=True)
                 except Exception as e:
-                    print(f"Error processing embeddings: {e}", file=sys.stderr, flush=True)
+                    print(f"Error processing result: {e}", file=sys.stderr, flush=True)
             
             if ":" in prompt:
                 text, user_prompt = prompt.split(":", 1)
@@ -120,6 +131,6 @@ if __name__ == "__main__":
                 print(f"Using embeddings of shape: {embeddings.shape}", file=sys.stderr, flush=True)
 
             print("STREAM", flush=True)
-            for token in stream_from_embeddings_and_prompt(model, embeddings, embeddings_type, prompt):
+            for token in stream_from_embeddings_and_prompt(model, embeddings, embeddings_type, prompt, lora_adapter):
                 print(token, flush=True)
             print("END", flush=True)

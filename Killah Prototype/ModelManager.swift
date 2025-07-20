@@ -102,7 +102,13 @@ class ModelManager: NSObject, ObservableObject {
             ModelFile(
                 dirName: "lora",
                 repoID: "poinka/lora_for_gemma",
-                requiredFiles: ["autocomplete_lora.gguf"]
+                requiredFiles: ["autocomplete_lora_f16.gguf"]
+        ),
+            ModelFile(
+                dirName: "lora",
+                repoID: "poinka/lora_for_gemma",
+                requiredFiles: ["rewriting_lora_f16.gguf"]
+            
         )
         
         // Any other models like MLP projectors or LoRA adapters can be added here.

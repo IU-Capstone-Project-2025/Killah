@@ -132,12 +132,12 @@ class LLMEngine: ObservableObject {
                                 
                                 var augmentedPrompt = prompt
                                 if !selectedEmbeddings.isEmpty {
-                                    augmentedPrompt += "[Контекст из персонализированных документов]"
+                                    augmentedPrompt += " \n[Контекст из персонализированных документов]"
                                 }
                                 
                                 self.continueGeneration(
                                     script: script,
-                                    prompt: augmentedPrompt.replacingOccurrences(of: "\n", with: " "),
+                                    prompt: augmentedPrompt,
                                     loraAdapter: loraAdapter,
                                     tokenStreamCallback: tokenStreamCallback,
                                     onComplete: onComplete
@@ -183,12 +183,12 @@ class LLMEngine: ObservableObject {
                                     
                                     var augmentedPrompt = prompt
                                     if !selectedEmbeddings.isEmpty {
-                                        augmentedPrompt += "[Контекст из персонализированных документов]"
+                                        augmentedPrompt += "\n[Контекст из персонализированных документов]"
                                     }
                                     
                                     self.continueGeneration(
                                         script: script,
-                                        prompt: augmentedPrompt.replacingOccurrences(of: "\n", with: " "),
+                                        prompt: augmentedPrompt,
                                         loraAdapter: loraAdapter,
                                         tokenStreamCallback: tokenStreamCallback,
                                         onComplete: onComplete
@@ -262,7 +262,7 @@ class LLMEngine: ObservableObject {
             return
         }
         print("📄 Generating suggestion for \(script) with prompt: \"\(prompt.prefix(100))\"")
-        if script == "autocomplete", let loraAdapter = loraAdapter {
+        if let loraAdapter = loraAdapter {
             modelServer.applyLoraAdapter(adapterName: loraAdapter) { result in
                 switch result {
                 case .success:
@@ -486,7 +486,8 @@ class ModelServerRunner {
         let appSupportDir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
                     .appendingPathComponent("KillahPrototype/models/lora").path
         self.loraAdapters = [
-                "\(appSupportDir)/autocomplete_lora.gguf"
+                "\(appSupportDir)/autocomplete_lora_f16.gguf",
+                "\(appSupportDir)/rewriting_lora_f16.gguf"
                 ] // Список всех LoRA-адаптеров
     }
 

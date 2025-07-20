@@ -6,8 +6,10 @@ import librosa
 import torch
 import torch.nn as nn
 import numpy as np
-from transformers import WhisperProcessor, WhisperModel
+from transformers import WhisperProcessor, WhisperModel, WhisperForConditionalGeneration
 from huggingface_hub import hf_hub_download
+import json
+import traceback
 
 # Add the script's directory to the Python path to allow local imports
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -22,11 +24,11 @@ class AudioProjector(nn.Module):
             nn.Linear(input_dim, hidden_dim),
             nn.ReLU(),
             nn.Linear(hidden_dim, output_dim),
-            )
+        )
         
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         b, t, d = x.shape
-        return self.net(x.view(b * t, d)).view(b, t, -1)
+        return self.proj(x.view(b * t, d)).view(b, t, -1)
 
 def downsample_and_concat(x: torch.Tensor, k: int) -> torch.Tensor:
     """Concatenate every k consecutive frames."""
@@ -36,9 +38,7 @@ def downsample_and_concat(x: torch.Tensor, k: int) -> torch.Tensor:
     n = t // k
     x = x[:, :n * k, :].reshape(b, n, k, c)
     return x.reshape(b, n, k * c)
-    
-    
-# Audio processing class with Whisper Medium and GGUF projector
+
 class AudioProcessor:
     def __init__(self, projector_file: str, downsample_k: int = 4, projector_hidden_dim: int = 2048, llm_hidden_dim: int = 2560):
         self.projector = None
@@ -48,33 +48,34 @@ class AudioProcessor:
         self.llm_hidden_dim = llm_hidden_dim
         self.whisper_processor = None
         self.whisper_model = None
+        self.whisper_transcriber = None  # For transcription
         self.device = "mps" if torch.backends.mps.is_available() and torch.backends.mps.is_built() else "cpu"
         self.use_mean_pooling = False
         self.load_models()
         
     def load_models(self):
-        """Load Whisper Medium and GGUF projector models."""
+        """Load Whisper Small models (encoder for embeddings, full model for transcription) and GGUF projector."""
         try:
-            # Load Whisper Medium
-            print("Loading Whisper Small model...", file=sys.stderr, flush=True)
-            # Get model base path from environment variable, fall back to bundled resources
+            print("Loading Whisper Small models...", file=sys.stderr, flush=True)
             base_model_path = os.environ.get('MODEL_DIR') or os.path.dirname(__file__)
             whisper_model_path = os.path.join(base_model_path, "whisper-small")
-            # Check if critical files exist
-            required_files = ["added_tokens.json", "config.json", "merges.txt", "normalizer.json", "preprocessor_config.json", "pytorch_model.bin", "special_tokens_map.json", "tokenizer.json", "tokenizer_config.json", "vocab.json"]
+            required_files = ["added_tokens.json", "config.json", "merges.txt", "normalizer.json",
+                            "preprocessor_config.json", "pytorch_model.bin", "special_tokens_map.json",
+                            "tokenizer.json", "tokenizer_config.json", "vocab.json"]
             
             if all(os.path.exists(os.path.join(whisper_model_path, f)) for f in required_files):
                 print(f"Loading local Whisper Small from {whisper_model_path}", file=sys.stderr, flush=True)
                 self.whisper_processor = WhisperProcessor.from_pretrained(whisper_model_path)
                 self.whisper_model = WhisperModel.from_pretrained(whisper_model_path).to(self.device).encoder
+                self.whisper_transcriber = WhisperForConditionalGeneration.from_pretrained(whisper_model_path).to(self.device)
             else:
-                # Пытаемся скачать модель из Hugging Face, если локальная копия отсутствует
                 print(f"Model directory {whisper_model_path} does not exist. Downloading from Hugging Face…", file=sys.stderr, flush=True)
                 hf_id = "openai/whisper-small"
                 self.whisper_processor = WhisperProcessor.from_pretrained(hf_id, token=os.environ.get('HF_TOKEN'))
                 self.whisper_model = WhisperModel.from_pretrained(hf_id, token=os.environ.get('HF_TOKEN')).to(self.device).encoder
+                self.whisper_transcriber = WhisperForConditionalGeneration.from_pretrained(hf_id, token=os.environ.get('HF_TOKEN')).to(self.device)
                 
-            print(f"Whisper loaded successfully", file=sys.stderr, flush=True)
+            print("Whisper models loaded successfully", file=sys.stderr, flush=True)
             
             # Load MLP projector
             projector_path = os.path.join(base_model_path, self.projector_file)
@@ -84,20 +85,13 @@ class AudioProcessor:
             if os.path.exists(projector_path):
                 print(f"Loading MLP projector from: {projector_path}", file=sys.stderr, flush=True)
                 checkpoint = torch.load(projector_path, map_location=self.device)
-                
             else:
                 print(f"Model directory {projector_path} does not exist. Downloading from Hugging Face…", file=sys.stderr, flush=True)
                 hf_id = "poinka/checkpoints"
                 filename = "latest_checkpoint_bs4_epoch_1_step_4300.pt"
-                
-                print(f"Downloading {filename} from {hf_id}...", file=sys.stderr, flush=True)
-                downloaded_path = hf_hub_download(
-                    repo_id=hf_id,
-                    filename=filename,
-                    local_dir=base_model_path,
-                )
+                downloaded_path = hf_hub_download(repo_id=hf_id, filename=filename, local_dir=base_model_path)
                 print(f"Loading downloaded MLP projector from: {downloaded_path}", file=sys.stderr, flush=True)
-                checkpoint = torch.load(downloaded_path, map_location=self0020device)
+                checkpoint = torch.load(downloaded_path, map_location=self.device)
             
             self.projector.load_state_dict(checkpoint['projector_state_dict'])
             self.projector.eval()
@@ -107,7 +101,6 @@ class AudioProcessor:
         except Exception as e:
             print(f"Error initializing audio models: {e}", file=sys.stderr, flush=True)
             return False
-        
 
     @staticmethod
     def load_audio_file(file_path: str, target_sr: int):
@@ -119,80 +112,86 @@ class AudioProcessor:
             print(f"Error loading audio file {file_path}: {e}", file=sys.stderr, flush=True)
             return None
 
-    
-    def process_audio(self, file_path, target_sr=16000):
-        """Process audio file with Whisper Small and generate embeddings using GGUF projector."""
-        if not self.whisper_processor or not self.whisper_model or not self.projector:
-            print("Models not initialized", file=sys.stderr, flush=True)
+    def process_audio(self, file_path, target_sr=16000, generateEmbeddings=False, language="en", task="transcribe"):
+        """Обрабатывает аудиофайл с помощью Whisper Small: возвращает эмбеддинги или транскрипцию."""
+        import traceback
+
+        print(f"Starting audio processing for: {file_path}", file=sys.stderr, flush=True)
+        if not self.whisper_processor or not self.whisper_model or not self.projector or not self.whisper_transcriber:
+            print("Error: Models not initialized", file=sys.stderr, flush=True)
             return None
 
+        print("Loading audio file...", file=sys.stderr, flush=True)
         audio_data = self.load_audio_file(file_path, target_sr)
         if audio_data is None:
+            print("Error: Failed to load audio file", file=sys.stderr, flush=True)
             return None
+        print(f"Audio file loaded successfully, shape: {audio_data.shape}", file=sys.stderr, flush=True)
 
         try:
-            print(f"Processing audio file with Whisper Small: {file_path}", file=sys.stderr, flush=True)
-            # Generate log-mel spectrograms with WhisperProcessor
-            inputs = self.whisper_processor(audio_data, sampling_rate=target_sr, return_tensors="pt").to(self.device)
+            print("Converting audio to log-mel spectrograms...", file=sys.stderr, flush=True)
+            input_features = self.whisper_processor(audio_data, sampling_rate=target_sr, return_tensors="pt", return_attention_mask=True).input_features.to(self.device) 
+            print(f"Input features shape: {input_features.shape}", file=sys.stderr, flush=True)
             
-            # Extract encoder embeddings
-            with torch.no_grad():
-                embeddings = self.whisper_model(**inputs).last_hidden_state # Shape: [1, seq_len, 1024]
-                
-                # Downsample and concatenate
-                downsampled_embeddings = downsample_and_concat(embeddings, self.downsample_k)  # Shape: [1, seq_len//k, 1024*k]
-                
-                # Project embeddings
-                projected_embeddings = self.projector(downsampled_embeddings)  # Shape: [1, seq_len//k, llm_hidden_dim]
-                
-                # Mean pooling (optional, for compatibility with existing pipeline)
-                if self.use_mean_pooling:
-                    final_embeddings = torch.mean(projected_embeddings, dim=1).squeeze(0)  # Shape: [llm_hidden_dim]
-                else:
-                    final_embeddings = projected_embeddings.squeeze(0)  # Shape: [seq_len//k, llm_hidden_dim]
-                 
-                 
-            print(f"Downsampled embeddings shape: {downsampled_embeddings.shape}", file=sys.stderr, flush=True)
-            print(f"Projected embeddings shape: {projected_embeddings.shape}", file=sys.stderr, flush=True)
-            print(f"Final embeddings shape: {final_embeddings.shape}", file=sys.stderr, flush=True)
-
-            return {"type": "projected_audio_embeds", "embeddings": final_embeddings.tolist()}
+            if generateEmbeddings:
+                print("Generating embeddings...", file=sys.stderr, flush=True)
+                with torch.no_grad():
+                    embeddings = self.whisper_model(input_features).last_hidden_state
+                    print(f"Whisper encoder embeddings shape: {embeddings.shape}", file=sys.stderr, flush=True)
+                    downsampled_embeddings = downsample_and_concat(embeddings, self.downsample_k)
+                    print(f"Downsampled embeddings shape: {downsampled_embeddings.shape}", file=sys.stderr, flush=True)
+                    projected_embeddings = self.projector(downsampled_embeddings)
+                    print(f"Projected embeddings shape: {projected_embeddings.shape}", file=sys.stderr, flush=True)
+                    if self.use_mean_pooling:
+                        final_embeddings = torch.mean(projected_embeddings, dim=1).squeeze(0)
+                    else:
+                        final_embeddings = projected_embeddings.squeeze(0)
+                    print(f"Final embeddings shape: {final_embeddings.shape}", file=sys.stderr, flush=True)
+                    return {"type": "projected_audio_embeds", "embeddings": final_embeddings.tolist()}
+            else:
+                # FORCE CPU PROCESSING FOR TRANSCRIPTION TO AVOID MPS ERRORS
+                with torch.device('cpu'):
+                    cpu_transcriber = self.whisper_transcriber.to('cpu')
+                    input_cpu = input_features.cpu()
+                    predicted_ids = cpu_transcriber.generate(input_cpu)
+                    transcription = self.whisper_processor.batch_decode(predicted_ids, skip_special_tokens=True)[0]
+                    return {"type": "transcription", "text": transcription}
 
         except Exception as e:
-            print(f"Error processing audio: {e}", file=sys.stderr, flush=True)
+            print(f"Error processing audio: {str(e)}", file=sys.stderr, flush=True)
+            print("Stack trace:", file=sys.stderr, flush=True)
+            traceback.print_exc(file=sys.stderr)
+            print(f"Processing failed for {file_path}", file=sys.stderr, flush=True)
             return None
-
-
-
+        
 # Global processor instance
 audio_processor = None
 
 def initialize_processor():
-    """Initialize the audio processor with Whisper Medium and MLP projector."""
+    """Initialize the audio processor with Whisper Small and MLP projector."""
     global audio_processor
     projector_file = "checkpoints/latest_checkpoint_bs4_epoch_1_step_4300.pt"
     audio_processor = AudioProcessor(projector_file)
-    
-    return audio_processor.projector is not None and audio_processor.whisper_model is not None and audio_processor.whisper_processor is not None
+    return audio_processor.projector is not None and audio_processor.whisper_model is not None and audio_processor.whisper_processor is not None and audio_processor.whisper_transcriber is not None
 
 def process_audio_file(file_path):
-    """Process the audio file and return embeddings."""
-    if not audio_processor or not audio_processor.projector or not audio_processor.whisper_model or not audio_processor.whisper_processor:
+    """Process the audio file and return embeddings or transcription."""
+    if not audio_processor or not audio_processor.projector or not audio_processor.whisper_model or not audio_processor.whisper_processor or not audio_processor.whisper_transcriber:
         print("Audio processor not initialized", file=sys.stderr, flush=True)
         return None
-    result = audio_processor.process_audio(file_path)
+    result = audio_processor.process_audio(file_path, generateEmbeddings=False)  # Set to False for transcription
     if result is not None:
         print(json.dumps(result), flush=True)
         print("END", flush=True)
     return result
-    
+
 if __name__ == "__main__":
     print("Audio.py main loop started.", file=sys.stderr, flush=True)
     
     models_initialized = initialize_processor()
     
     if models_initialized:
-        print("READY", flush=True)  # Вывод на stdout
+        print("READY", flush=True)
     
     while True:
         try:
@@ -208,15 +207,17 @@ if __name__ == "__main__":
                 if not line:
                     print("EOF received, exiting audio.py.", file=sys.stderr, flush=True)
                     break
-
-                file_path = line.strip()
-                if not file_path:
-                    continue
-                
-                print(f"Received audio file path: {file_path}", file=sys.stderr, flush=True)
-                result = process_audio_file(file_path)
-                if result is None:
-                    print(f"Processing failed for {file_path}", file=sys.stderr, flush=True)
+                if ".wav" in line:
+                    file_path = line.strip()
+                    if not file_path:
+                        continue
+                    
+                    print(f"Received audio file path: {file_path}", file=sys.stderr, flush=True)
+                    result = process_audio_file(file_path)
+                    if result is None:
+                        print(f"Processing failed for {file_path}", file=sys.stderr, flush=True)
+                else:
+                    print(f"Context: {line} received", file=sys.stderr, flush=True)
 
         except KeyboardInterrupt:
             print("KeyboardInterrupt received, exiting.", file=sys.stderr, flush=True)
