@@ -12,16 +12,25 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 if script_dir not in sys.path:
     sys.path.insert(0, script_dir)
 
-def wait_for_server(server_url, timeout=30):
-    start_time = time.time()
-    while time.time() - start_time < timeout:
+# Replaced blocking wait loop with exponential back-off (max 120 s)
+def wait_for_server(server_url: str, timeout: int = 120, initial_delay: float = 1.0, max_delay: float = 8.0) -> bool:
+    """Poll server_url/health until HTTP 200 or timeout seconds passed."""
+    deadline = time.time() + timeout
+    delay = initial_delay
+    attempt = 0
+    while time.time() < deadline:
+        attempt += 1
         try:
-            response = requests.get(f"{server_url}/health", timeout=2)
-            if response.status_code == 200:
+            resp = requests.get(f"{server_url}/health", timeout=2)
+            if resp.status_code == 200:
+                print(f"Health-check OK on attempt {attempt}", file=sys.stderr, flush=True)
                 return True
-        except requests.exceptions.ConnectionError:
-            pass
-        time.sleep(1)
+            else:
+                print(f"Health-check attempt {attempt}: HTTP {resp.status_code}", file=sys.stderr, flush=True)
+        except Exception as exc:
+            print(f"Health-check attempt {attempt} failed: {exc}", file=sys.stderr, flush=True)
+        time.sleep(delay)
+        delay = min(delay * 2, max_delay)
     return False
 
 def initialize_model():

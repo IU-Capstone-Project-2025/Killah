@@ -90,7 +90,8 @@
 				40C7315B2DC63936004D753D /* Sources */,
 				40C7315C2DC63936004D753D /* Frameworks */,
 				40C7315D2DC63936004D753D /* Resources */,
-				400286852DC77D5A002A3D68 /* Package Python */,
+				400286852DC77D5A002A3D68 /* Install Python */,
+				40D5E9662E2D5DFF00925525 /* Free Port */,
 			);
 			buildRules = (
 			);
@@ -164,7 +165,7 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
-		400286852DC77D5A002A3D68 /* Package Python */ = {
+		400286852DC77D5A002A3D68 /* Install Python */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -175,7 +176,7 @@
 				"$(SRCROOT)/Scripts/package_app.sh",
 				"$(SRCROOT)/Resources/requirements.txt",
 			);
-			name = "Package Python";
+			name = "Install Python";
 			outputFileListPaths = (
 			);
 			outputPaths = (
@@ -185,6 +186,25 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/bash;
 			shellScript = "set -e\necho \"🚀 Starting Package Python script\"\necho \"BUILT_PRODUCTS_DIR: $BUILT_PRODUCTS_DIR\"\necho \"PRODUCT_NAME: $PRODUCT_NAME\"\nbash \"${SRCROOT}/Scripts/package_app.sh\"\necho \"✅ Package Python script completed\"\n";
+		};
+		40D5E9662E2D5DFF00925525 /* Free Port */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Free Port";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "lsof -ti:8080 | xargs kill -9 || true\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -332,7 +352,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
-				DEVELOPMENT_TEAM = 4Q826KG7YN;
+				DEVELOPMENT_TEAM = FK825CF827;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
@@ -341,6 +361,7 @@
 				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = NO;
 				"INFOPLIST_FILE[sdk=*]" = Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Killah;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
@@ -381,7 +402,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
-				DEVELOPMENT_TEAM = 4Q826KG7YN;
+				DEVELOPMENT_TEAM = FK825CF827;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
@@ -390,6 +411,7 @@
 				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = NO;
 				"INFOPLIST_FILE[sdk=*]" = Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Killah;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
