@@ -49,11 +49,20 @@ class LLMEngine: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private var currentTemperature: Float = 0.8 // Начальное значение температуры
     private let modelContainer: ModelContainer
+    private let loraAdapterMap: [String: String]
     
     init(modelManager: ModelManager,modelContainer: ModelContainer) {
         print("LLMEngine init")
         self.modelContainer = modelContainer
         let modelDir = modelManager.getModelsDirectory().path
+        
+        let loraDir = modelManager.getModelsDirectory().appendingPathComponent("lora").path
+        self.loraAdapterMap = [
+            "autocomplete": "\(loraDir)/autocomplete_lora_f16.gguf",
+            "rewriting": "\(loraDir)/rewriting_lora_f16.gguf",
+            "generation": "\(loraDir)/story_lora_f16.gguf"
+            // Add other task-to-adapter mappings here
+        ]
         
         // Initialize the model server
         modelServer = ModelServerRunner(modelDirectory: modelDir)
@@ -94,139 +103,105 @@ class LLMEngine: ObservableObject {
         for script: String,
         prompt: String,
         isFromCaret: Bool = false,  // Флаг, указывающий, что промпт содержит эмбеддинги
-        loraAdapter: String? = nil,
+        taskType: String? = nil, // New parameter to specify the task type
         tokenStreamCallback: @escaping (String) -> Void,
-        onComplete: @escaping (Result<String, LLMError>) -> Void
+        onComplete: @escaping (Result<String, LLMEngine.LLMError>) -> Void
     ) {
-        guard let runner = runners[script] else {
-            print("❌ Unknown script: \(script)")
-            onComplete(.failure(.scriptError("Unknown script: \(script)")))
-            return
-        }
         if activeTasks[script] == true {
             print("⏳ Waiting for previous task in \(script) to complete")
-            runner.abortSuggestion(notifyPython: true) // Прерываем предыдущую задачу
+            runners[script]?.abortSuggestion(notifyPython: true)
         }
         activeTasks[script] = true
-        Task{
+        
+        let loraAdapterPath = taskType.flatMap { loraAdapterMap[$0] }
+        
+        Task {
             let personalizedDocs = await getPersonalizedDocuments()
             let docEmbeddings = personalizedDocs.map { $0.embedding }
             let docURLs = personalizedDocs.map { $0.url }
             
+            var augmentedPrompt = prompt
+            
             if !docEmbeddings.isEmpty {
-                if isFromCaret {
-                    // Извлекаем эмбеддинги из промпта
-                    let embeddingsJson = extractEmbeddingsJson(from: prompt)
-                    if let embeddings = parseEmbeddings(from: embeddingsJson) {
-                        computeAttentionWeights(target: embeddings, histories: docEmbeddings) { result in
-                            switch result {
-                            case .success(let weights):
-                                print("ℹ️ Веса внимания: \(weights)")
-                                let threshold = 0.5
-                                var selectedEmbeddings: [URL] = []
-                                for (index, weight) in weights.enumerated() where weight > threshold {
-                                    let embedURL = docURLs[index].deletingPathExtension().appendingPathExtension("pt")
-                                    selectedEmbeddings.append(embedURL)
-                                }
-                                print("ℹ️ Выбрано эмбеддингов: \(selectedEmbeddings.count)")
-                                
-                                var augmentedPrompt = prompt
-                                if !selectedEmbeddings.isEmpty {
-                                    augmentedPrompt += " \n[Контекст из персонализированных документов]"
-                                }
-                                
-                                self.continueGeneration(
-                                    script: script,
-                                    prompt: augmentedPrompt,
-                                    loraAdapter: loraAdapter,
-                                    tokenStreamCallback: tokenStreamCallback,
-                                    onComplete: onComplete
-                                )
-                            case .failure(let error):
-                                print("🫩 Ошибка вычисления весов внимания: \(error)")
-                                self.continueGeneration(
-                                    script: script,
-                                    prompt: prompt,
-                                    loraAdapter: loraAdapter,
-                                    tokenStreamCallback: tokenStreamCallback,
-                                    onComplete: onComplete
-                                )
-                            }
-                        }
-                    } else {
-                        print("🫩 Ошибка: не удалось извлечь или распарсить эмбеддинги из промпта")
-                        continueGeneration(
-                            script: script,
-                            prompt: prompt,
-                            loraAdapter: loraAdapter,
-                            tokenStreamCallback: tokenStreamCallback,
-                            onComplete: onComplete
-                        )
-                    }
-                } else {
-                    // Generate embedding for the prompt
-                    generateEmbedding(for: prompt) { [weak self] result in
-                        guard let self = self else { return }
-                        switch result {
-                        case .success(let targetEmbedding):
-                            self.computeAttentionWeights(target: targetEmbedding, histories: docEmbeddings) { result in
-                                switch result {
-                                case .success(let weights):
-                                    print("ℹ️ Веса внимания: \(weights)")
-                                    let threshold = 0.5
-                                    var selectedEmbeddings: [URL] = []
-                                    for (index, weight) in weights.enumerated() where weight > threshold {
-                                        let embedURL = docURLs[index].deletingPathExtension().appendingPathExtension("pt")
-                                        selectedEmbeddings.append(embedURL)
-                                    }
-                                    print("ℹ️ Выбрано эмбеддингов: \(selectedEmbeddings.count)")
-                                    
-                                    var augmentedPrompt = prompt
-                                    if !selectedEmbeddings.isEmpty {
-                                        augmentedPrompt += "\n[Контекст из персонализированных документов]"
-                                    }
-                                    
-                                    self.continueGeneration(
-                                        script: script,
-                                        prompt: augmentedPrompt,
-                                        loraAdapter: loraAdapter,
-                                        tokenStreamCallback: tokenStreamCallback,
-                                        onComplete: onComplete
-                                    )
-                                case .failure(let error):
-                                    print("🫩 Ошибка вычисления весов внимания: \(error)")
-                                    self.continueGeneration(
-                                        script: script,
-                                        prompt: prompt,
-                                        loraAdapter: loraAdapter,
-                                        tokenStreamCallback: tokenStreamCallback,
-                                        onComplete: onComplete
-                                    )
-                                }
-                            }
-                        case .failure(let error):
-                            print("🫩 Ошибка генерации эмбеддинга для промпта: \(error)")
-                            self.continueGeneration(
-                                script: script,
-                                prompt: prompt,
-                                loraAdapter: loraAdapter,
-                                tokenStreamCallback: tokenStreamCallback,
-                                onComplete: onComplete
-                            )
-                        }
-                    }
-                }
-            } else {
-                continueGeneration(
-                    script: script,
+                let attentionResult = await computeAttentionWithEmbeddings(
                     prompt: prompt,
-                    loraAdapter: loraAdapter,
-                    tokenStreamCallback: tokenStreamCallback,
-                    onComplete: onComplete
+                    isFromCaret: isFromCaret,
+                    docEmbeddings: docEmbeddings,
+                    docURLs: docURLs
                 )
+                
+                switch attentionResult {
+                case .success(let finalPrompt):
+                    augmentedPrompt = finalPrompt
+                case .failure(let error):
+                    print("⚠️ Attention computation failed: \(error). Proceeding without context.")
+                }
             }
+            
+            continueGeneration(
+                script: script,
+                prompt: augmentedPrompt,
+                loraAdapter: loraAdapterPath,
+                tokenStreamCallback: tokenStreamCallback,
+                onComplete: onComplete
+            )
         }
     }
+    
+    // Helper function to encapsulate attention logic
+    private func computeAttentionWithEmbeddings(
+        prompt: String,
+        isFromCaret: Bool,
+        docEmbeddings: [[Float]],
+        docURLs: [URL]
+    ) async -> Result<String, LLMEngine.LLMError> {
+        
+        let targetEmbedding: [Float]
+        if isFromCaret {
+            if let json = extractEmbeddingsJson(from: prompt), let embeddings = parseEmbeddings(from: json) {
+                targetEmbedding = embeddings
+            } else {
+                return .failure(.scriptError("Failed to extract or parse embeddings from prompt"))
+            }
+        } else {
+            do {
+                targetEmbedding = try await withCheckedThrowingContinuation { continuation in
+                    generateEmbedding(for: prompt) { result in
+                        continuation.resume(with: result)
+                    }
+                }
+            } catch {
+                return .failure(error as? LLMEngine.LLMError ?? .scriptError("Unknown embedding error"))
+            }
+        }
+        
+        let weights: [Double]
+        do {
+            weights = try await withCheckedThrowingContinuation { continuation in
+                computeAttentionWeights(target: targetEmbedding, histories: docEmbeddings) { result in
+                    continuation.resume(with: result)
+                }
+            }
+        } catch {
+            return .failure(error as? LLMEngine.LLMError ?? .scriptError("Unknown attention weights error"))
+        }
+        
+        print("ℹ️ Веса внимания: \(weights)")
+        let threshold = 0.5
+        var selectedEmbeddings: [URL] = []
+        for (index, weight) in weights.enumerated() where weight > threshold {
+            let embedURL = docURLs[index].deletingPathExtension().appendingPathExtension("pt")
+            selectedEmbeddings.append(embedURL)
+        }
+        print("ℹ️ Выбрано эмбеддингов: \(selectedEmbeddings.count)")
+        
+        var augmentedPrompt = prompt
+        if !selectedEmbeddings.isEmpty {
+            augmentedPrompt += "\n[Контекст из персонализированных документов]"
+        }
+        return .success(augmentedPrompt)
+    }
+
     
     // Вспомогательный метод для продолжения генерации
     private func continueGeneration(
@@ -234,7 +209,7 @@ class LLMEngine: ObservableObject {
         prompt: String,
         loraAdapter: String?,
         tokenStreamCallback: @escaping (String) -> Void,
-        onComplete: @escaping (Result<String, LLMError>) -> Void
+        onComplete: @escaping (Result<String, LLMEngine.LLMError>) -> Void
     ) {
         if let cachedSuggestion = CacheManager.shared.getCachedSuggestion(for: prompt, temperature: self.currentTemperature) {
             print("📦 Cache hit for prompt: \"\(prompt)\"")
@@ -256,41 +231,21 @@ class LLMEngine: ObservableObject {
             sendNextToken()
             return
         }
+        print("📄 Generating suggestion for \(script) with prompt: \"\(prompt.prefix(100))\"")
+
         guard let runner = runners[script] else {
-            print("❌ Unknown script: \(script)")
             onComplete(.failure(.scriptError("Unknown script: \(script)")))
             return
         }
-        print("📄 Generating suggestion for \(script) with prompt: \"\(prompt.prefix(100))\"")
-        if let loraAdapter = loraAdapter {
-            modelServer.applyLoraAdapter(adapterName: loraAdapter) { result in
-                switch result {
-                case .success:
-                    print("📄 Generating suggestion with LoRA: \(loraAdapter)")
-                    runner.sendData(prompt, tokenStreamCallback: tokenStreamCallback) { result in
-                        self.activeTasks[script] = false // Сбрасываем состояние после завершения
-                        switch result {
-                        case .success(let suggestion):
-                            CacheManager.shared.setCachedSuggestion(suggestion, for: prompt, temperature: self.currentTemperature)
-                            onComplete(.success(suggestion))
-                        case .failure(let error):
-                            onComplete(.failure(error))
-                        }
-                    }
-                case .failure(let error):
-                    onComplete(.failure(.scriptError("Failed to apply LoRA adapter: \(error.localizedDescription)")))
-                }
-            }
-        } else {
-            runner.sendData(prompt, tokenStreamCallback: tokenStreamCallback) { result in
-                self.activeTasks[script] = false // Сбрасываем состояние после завершения
-                switch result {
-                case .success(let suggestion):
-                    CacheManager.shared.setCachedSuggestion(suggestion, for: prompt, temperature: self.currentTemperature)
-                    onComplete(.success(suggestion))
-                case .failure(let error):
-                    onComplete(.failure(error))
-                }
+
+        runner.sendData(prompt, loraPath: loraAdapter, tokenStreamCallback: tokenStreamCallback) { result in
+            self.activeTasks[script] = false // Сбрасываем состояние после завершения
+            switch result {
+            case .success(let suggestion):
+                CacheManager.shared.setCachedSuggestion(suggestion, for: prompt, temperature: self.currentTemperature)
+                onComplete(.success(suggestion))
+            case .failure(let error):
+                onComplete(.failure(error))
             }
         }
         updateEngineState(runner.state)
@@ -325,7 +280,7 @@ class LLMEngine: ObservableObject {
     func computeAttentionWeights(
         target: [Float],
         histories: [[Float]],
-        onComplete: @escaping (Result<[Double], LLMError>) -> Void
+        onComplete: @escaping (Result<[Double], LLMEngine.LLMError>) -> Void
     ) {
         guard let runner = runners["attention"] else {
             onComplete(.failure(.scriptError("Attention runner not found")))
@@ -344,7 +299,7 @@ class LLMEngine: ObservableObject {
                 return
             }
             
-            runner.sendData(jsonString, tokenStreamCallback: { _ in }, onComplete: { result in
+            runner.sendData(jsonString, loraPath: nil, tokenStreamCallback: { _ in }, onComplete: { result in
                 switch result {
                 case .success(let output):
                     do {
@@ -364,14 +319,14 @@ class LLMEngine: ObservableObject {
     
     func generateEmbedding(
         for text: String,
-        onComplete: @escaping (Result<[Float], LLMError>) -> Void
+        onComplete: @escaping (Result<[Float], LLMEngine.LLMError>) -> Void
     ) {
         guard let runner = runners["embeddings"] else {
             onComplete(.failure(.scriptError("Embeddings runner not found")))
             return
         }
         let input = text
-        runner.sendData(input, tokenStreamCallback: { _ in }) { result in
+        runner.sendData(input, loraPath: nil, tokenStreamCallback: { _ in }) { result in
             switch result {
             case .success(let output):
                 do {
@@ -479,16 +434,9 @@ class ModelServerRunner {
     private var serverProcess: Process?
     private var _state: LLMEngine.EngineState = .idle
     private let modelDirectory: String
-    private let loraAdapters: [String] // Список LoRA-адаптеров
 
     init(modelDirectory: String) {
         self.modelDirectory = modelDirectory
-        let appSupportDir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-                    .appendingPathComponent("KillahPrototype/models/lora").path
-        self.loraAdapters = [
-                "\(appSupportDir)/autocomplete_lora_f16.gguf",
-                "\(appSupportDir)/rewriting_lora_f16.gguf"
-                ] // Список всех LoRA-адаптеров
     }
 
     var state: LLMEngine.EngineState {
@@ -501,7 +449,7 @@ class ModelServerRunner {
             return
         }
         
-        print("🚀 Starting llama-server...")
+        print("🚀 Starting Python server...")
         updateState(.starting)
         
         let process = Process()
@@ -512,26 +460,15 @@ class ModelServerRunner {
             return
         }
         
-        let serverPath = resourcesPath + "/venv/bin/llama-server"
-        let modelPath = modelDirectory + "/gemma/gemma-3-4b-pt-q4_0.gguf"
+        let pythonPath = resourcesPath + "/venv/bin/python"
+        let scriptPath = resourcesPath + "/run_server.py"
         
-        var arguments = [
-            "-m", modelPath,
-            "--port", "8080",
-            "--host", "localhost",
-            "--n-gpu-layers", "1",
-            "--embedding",
-            "--lora-init-without-apply" // Загружаем адаптеры без применения
-        ]
+        process.executableURL = URL(fileURLWithPath: pythonPath)
+        process.arguments = [scriptPath]
         
-        // Добавляем все LoRA-адаптеры
-        for loraPath in loraAdapters {
-            arguments.append("--lora")
-            arguments.append(loraPath)
-        }
-        
-        process.executableURL = URL(fileURLWithPath: serverPath)
-        process.arguments = arguments
+        var environment = ProcessInfo.processInfo.environment
+        environment["MODEL_DIR"] = self.modelDirectory
+        process.environment = environment
         
         let stderrPipe = Pipe()
         process.standardError = stderrPipe
@@ -539,8 +476,8 @@ class ModelServerRunner {
         stderrPipe.fileHandleForReading.readabilityHandler = { pipe in
             let data = pipe.availableData
             if !data.isEmpty, let output = String(data: data, encoding: .utf8) {
-                print("🐍 llama-server STDERR: \"\(output.trimmingCharacters(in: .whitespacesAndNewlines))\"")
-                if output.contains("llama server listening") {
+                print("🐍 Python Server STDERR: \"\(output.trimmingCharacters(in: .whitespacesAndNewlines))\"")
+                if output.contains("Uvicorn running on") {
                     self.updateState(.running)
                 }
             }
@@ -548,9 +485,9 @@ class ModelServerRunner {
         
         do {
             try process.run()
-            print("✅ llama-server launched. PID: \(process.processIdentifier)")
+            print("✅ Python server launched. PID: \(process.processIdentifier)")
         } catch {
-            print("🫩 Error launching llama-server: \(error)")
+            print("🫩 Error launching Python server: \(error)")
             updateState(.error("Launch fail: \(error.localizedDescription)"))
             serverProcess = nil
         }
@@ -558,62 +495,25 @@ class ModelServerRunner {
 
     func stop() {
         if let process = serverProcess, process.isRunning {
-            print("🛑 Останавливаем llama-server с PID: \(process.processIdentifier)")
+            print("🛑 Stopping Python server with PID: \(process.processIdentifier)")
             process.terminate() // Отправляем SIGTERM
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                 if process.isRunning {
-                    print("🛑 Сервер llama-server все еще работает, принудительно завершаем")
+                    print("🛑 Python server is still running, forcing termination")
                     kill(process.processIdentifier, SIGKILL) // Отправляем SIGKILL
                 } else {
-                    print("🛑 Сервер llama-server успешно остановлен")
+                    print("🛑 Python server stopped successfully")
                 }
             }
         } else {
-            print("🛑 Нет запущенного процесса сервера")
+            print("🛑 No running server process found")
         }
         serverProcess = nil
         updateState(.stopped)
     }
 
-    // Функция для применения LoRA-адаптера через API
-    func applyLoraAdapter(adapterName: String, scale: Float = 1.0, completion: @escaping (Result<Void, Error>) -> Void) {
-        let url = URL(string: "http://localhost:8080/lora-adapters")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        
-        let body: [String: Any] = [
-            "adapters": [
-                [
-                    "path": adapterName, // Например, "lora/autocomplete_lora.gguf"
-                    "scale": scale
-                ]
-            ]
-        ]
-        
-        do {
-            request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        } catch {
-            completion(.failure(error))
-            return
-        }
-        
-        URLSession.shared.dataTask(with: request) { data, response, error in
-            if let error = error {
-                print("🫩 Error applying LoRA adapter: \(error)")
-                completion(.failure(error))
-                return
-            }
-            
-            if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 {
-                print("✅ Applied LoRA adapter: \(adapterName)")
-                completion(.success(()))
-            } else {
-                let error = NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to apply LoRA adapter"])
-                completion(.failure(error))
-            }
-        }.resume()
-    }
+    // This function is no longer needed as LoRA adapters are passed per-request.
+    // func applyLoraAdapter(adapterPath: String?, scale: Float = 1.0, completion: @escaping (Result<Void, Error>) -> Void) { ... }
     
     private func updateState(_ newState: LLMEngine.EngineState) {
         if _state != newState {

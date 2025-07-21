@@ -5,6 +5,7 @@ import QuartzCore
 
 struct InlineSuggestingTextView: NSViewRepresentable {
     @EnvironmentObject var themeManager: ThemeManager
+    @EnvironmentObject var appStateManager: AppStateManager
     @Binding var text: String
     @ObservedObject var llmEngine: LLMEngine
     @ObservedObject var audioEngine: AudioEngine
@@ -145,8 +146,9 @@ struct InlineSuggestingTextView: NSViewRepresentable {
             context.coordinator.currentCommittedText = text
         }
         
-        if textView.isEditable != true {
-            textView.isEditable = true
+        // Update editable state based on global state
+        if textView.isEditable != !appStateManager.isGenerating {
+            textView.isEditable = !appStateManager.isGenerating
         }
     }
 
@@ -495,6 +497,12 @@ class Coordinator: NSObject, NSTextViewDelegate {
                 return
             }
 
+            // Do not trigger autocomplete if another generation is already in progress
+            guard !parent.appStateManager.isGenerating else {
+                print("🚫 Generation is already in progress from another source. Skipping autocomplete.")
+                return
+            }
+
             print("✨ requestTextCompletion: sending prompt length \(currentPromptForLLM.count) at cursor position \(cursorPosition)")
 
             if textView.ghostText() != nil {
@@ -503,11 +511,14 @@ class Coordinator: NSObject, NSTextViewDelegate {
 
             // Помечаем начало генерации
             caretCoordinator?.isGenerating = true
+            parent.appStateManager.startGeneration(from: .autocomplete)
 
             llmEngine.generateSuggestion(
                 for: "autocomplete",
                 prompt: currentPromptForLLM,
-                isFromCaret: false) { [weak textView] token in
+                isFromCaret: false,
+                taskType: "autocomplete"
+            ) { [weak textView] token in
                 DispatchQueue.main.async {
                     textView?.appendGhostTextToken(token)
                 }
@@ -527,6 +538,7 @@ class Coordinator: NSObject, NSTextViewDelegate {
                     }
                     // Готово или прервано — сбрасываем флаг генерации
                     self?.caretCoordinator?.isGenerating = false
+                    self?.parent.appStateManager.stopGeneration()
                 }
             }
         }
@@ -614,7 +626,9 @@ class Coordinator: NSObject, NSTextViewDelegate {
         private func clearAllCompletions(for textView: CustomInlineNSTextView) {
             textView.clearGhostText()
             parent.debouncer.cancel()
+            llmEngine.abortSuggestion(for: "autocomplete")
             caretCoordinator?.isGenerating = false
+            parent.appStateManager.stopGeneration()
         }
         
         func updateCaret() {

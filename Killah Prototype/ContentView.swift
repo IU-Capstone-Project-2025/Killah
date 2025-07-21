@@ -49,6 +49,7 @@ struct ContentView: View {
     @EnvironmentObject var llmEngine: LLMEngine
     @EnvironmentObject var audioEngine: AudioEngine
     @EnvironmentObject var modelManager: ModelManager
+    @StateObject private var appStateManager = AppStateManager.shared
     @State private var debouncer = Debouncer(delay: 1.0)
     @State private var textFormattingDelegate: TextFormattingDelegate?
     
@@ -64,8 +65,6 @@ struct ContentView: View {
     @State private var isCenterAlignActive = false
     @State private var isRightAlignActive  = false
 
-    @EnvironmentObject var appState: AppStateManager
-
     var body: some View {
         ZStack {
             // Main editor UI
@@ -74,9 +73,9 @@ struct ContentView: View {
             VStack {
                 Spacer()
                 LoadingOverlayView()
-                    .opacity(appState.isPythonScriptsStarting ? 1 : 0)
-                    .offset(y: appState.isPythonScriptsStarting ? 0 : 120)
-                    .animation(.easeInOut(duration: 0.35), value: appState.isPythonScriptsStarting)
+                    .opacity(appStateManager.isPythonScriptsStarting ? 1 : 0)
+                    .offset(y: appStateManager.isPythonScriptsStarting ? 0 : 120)
+                    .animation(.easeInOut(duration: 0.35), value: appStateManager.isPythonScriptsStarting)
                     .frame(maxWidth: .infinity)
                     .padding(.bottom, 20)
             }
@@ -85,7 +84,7 @@ struct ContentView: View {
             updateToolbarStates()
         }
         .sheet(isPresented: Binding(
-            get: { appState.isModelDownloading },
+            get: { appStateManager.isModelDownloading },
             set: { _ in }
         )) {
             ModelDownloadView(
@@ -94,7 +93,7 @@ struct ContentView: View {
                 isDownloading: modelManager.status.isDownloading,
                 downloadProgress: modelManager.status.progress
             )
-            .environmentObject(appState)
+            .environmentObject(appStateManager)
         }
     }
     
@@ -120,6 +119,7 @@ struct ContentView: View {
                 },
                 viewUpdater: $viewUpdater
             )
+            .environmentObject(appStateManager)
 
             // Floating toolbar with system white background
             FloatingToolbar(
@@ -258,6 +258,7 @@ struct ContentView_Previews: PreviewProvider {
             .environmentObject(dependencies.llmEngine)
             .environmentObject(dependencies.audioEngine)
             .environmentObject(dependencies.modelManager)
+            .environmentObject(AppStateManager.shared)
             .environment(\.modelContext, dependencies.modelContainer.mainContext)
         }
 }

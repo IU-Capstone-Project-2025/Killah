@@ -24,23 +24,38 @@ class ModelProxy:
             print(f"Error generating embeddings: {e}", file=sys.stderr, flush=True)
             return None
     
-    def create_completion(self, prompt, max_tokens, temperature, min_p, stream=True, lora_adapter=None):
+    def create_completion(self, prompt, max_tokens, temperature, min_p, stream=True):
+        final_prompt = prompt
+        lora_adapter = None
+        try:
+            # Пытаемся распарсить prompt как JSON
+            data = json.loads(prompt)
+            if isinstance(data, dict):
+                final_prompt = data.get("prompt", "")
+                lora_adapter = data.get("lora_path")
+        except json.JSONDecodeError:
+            # Если не JSON, считаем, что это обычный текстовый промпт
+            pass
+
         payload = {
-            "prompt": prompt,
+            "messages": [{"role": "user", "content": final_prompt}],
             "max_tokens": max_tokens,
             "temperature": temperature,
             "min_p": min_p,
             "stream": stream
         }
         if lora_adapter:
-            print("Applying LoRA", flush=True)
-            payload["lora_adapters"] = [{"path": lora_adapter, "scale": 1.0}]
+            print(f"Applying LoRA: {lora_adapter}", file=sys.stderr, flush=True)
+            payload["lora_path"] = lora_adapter
+
+        endpoint = f"{self.server_url}/custom_completion"
+
         if stream:
-            response = requests.post(f"{self.server_url}/completion", json=payload, stream=True)
+            response = requests.post(endpoint, json=payload, stream=True)
             response.raise_for_status()
             return response.iter_lines(decode_unicode=False)
         else:
-            response = requests.post(f"{self.server_url}/completion", json=payload)
+            response = requests.post(endpoint, json=payload)
             response.raise_for_status()
             return response.json()
 

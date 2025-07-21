@@ -43,6 +43,7 @@ class CaretUICoordinator: ObservableObject {
     }
     var textInsertionHandler: ((String) -> Void)? // Callback to insert text
     weak var textView: CustomInlineNSTextView? // Связь с CustomInlineNSTextView
+    private var appStateManager: AppStateManager { AppStateManager.shared }
 
     private var audioEngine: AudioEngine
     private var llmEngine: LLMEngine
@@ -258,9 +259,21 @@ class CaretUICoordinator: ObservableObject {
         audioEngine.togglePause()
     }
     
-    func generateFromTextPrompt(selectedText: String? = nil) {
+    func generateFromTextPrompt(selectedRange: NSRange?) {
+        let selectedText = getSelectedText(from: selectedRange)
         guard !promptText.isEmpty || selectedText != nil else { return }
+
+        // 1. Abort any ongoing autocomplete suggestions
+        llmEngine.abortSuggestion(for: "autocomplete")
+        
+        // 2. Set the global generation state to indicate a high-priority task
+        appStateManager.startGeneration(from: .prompt)
         isGenerating = true
+        
+        // 3. Collapse the UI
+        collapseUI()
+        
+        // 4. Construct the prompt
         let finalPrompt: String
         if let selected = selectedText, !selected.isEmpty {
             finalPrompt = promptText.isEmpty ? selected : "\(selected) : \(promptText)"
@@ -270,90 +283,112 @@ class CaretUICoordinator: ObservableObject {
         
         promptText = ""
         
-        llmEngine.startEngine(for: "embeddings")
-        let checkInterval: TimeInterval = 0.1
-        let maxAttempts = 50
-        var attempts = 0
-
-        // В цикле ждем, пока Python-скрипт не будет готов к работе.
-        // Это ожидание происходит в фоновом потоке.
-        while self.llmEngine.getRunnerState(for: "embeddings") != .running && attempts < maxAttempts {
-            Thread.sleep(forTimeInterval: checkInterval) // Пауза в фоновом потоке
-            attempts += 1
-        }
-
-        // Проверяем, запустился ли движок после ожидания
-        if self.llmEngine.getRunnerState(for: "embeddings") == .running {
-            llmEngine.generateSuggestion(
-                for: "embeddings",
-                prompt: finalPrompt,
-                isFromCaret: false,
-                tokenStreamCallback: { token in
-                    // Коллбэки могут приходить в любом потоке,
-                    // поэтому для любых обновлений UI лучше явно переключаться в главный поток.
-                    DispatchQueue.main.async {
-                        print("Embeddings token received: \(token.prefix(100))")
-                    }
-                },
-                onComplete: { [weak self] result in
-                    guard let self = self else { return }
-                    switch result {
-                    case .success(let embeddingsJson):
-                        self.processEmbeddings(embeddingsJson)
-                    case .failure(let error):
-                        print("Error generating embeddings: \(error)")
-                        self.isGenerating = false
-                    }
-                }
-            )
+        // 5. Generate embeddings
+        llmEngine.generateEmbedding(for: finalPrompt) { [weak self] result in
+            guard let self = self else { return }
+            
+            switch result {
+            case .success(let embeddings):
+                // 6. Generate the final text using the embeddings
+                self.generateTextFromEmbeddings(embeddings: embeddings, replacementRange: selectedRange)
+            case .failure(let error):
+                print("Error generating embeddings: \(error)")
+                self.isGenerating = false
+                self.appStateManager.stopGeneration()
+            }
         }
     }
     
     func generateFromAudioTranscription(_ transcription: String) {
         guard !transcription.isEmpty else {
             print("⚠️ Empty transcription, skipping generation")
-            isGenerating = false
             return
         }
+        
+        llmEngine.abortSuggestion(for: "autocomplete")
+        appStateManager.startGeneration(from: .audio)
         isGenerating = true
         
-        llmEngine.startEngine(for: "embeddings")
-        let checkInterval: TimeInterval = 0.1
-        let maxAttempts = 50
-        var attempts = 0
-
-        // Wait for the Python script to be ready
-        while self.llmEngine.getRunnerState(for: "embeddings") != .running && attempts < maxAttempts {
-            Thread.sleep(forTimeInterval: checkInterval)
-            attempts += 1
+        // Collapse the UI as soon as generation starts
+        collapseUI()
+        
+        llmEngine.generateEmbedding(for: transcription) { [weak self] result in
+            guard let self = self else { return }
+            
+            switch result {
+            case .success(let embeddings):
+                self.generateTextFromEmbeddings(embeddings: embeddings, replacementRange: self.textView?.selectedRange)
+            case .failure(let error):
+                print("Error generating embeddings from audio: \(error)")
+                self.isGenerating = false
+                self.appStateManager.stopGeneration()
+            }
         }
+    }
 
-        // Check if the engine started successfully
-        if self.llmEngine.getRunnerState(for: "embeddings") == .running {
-            llmEngine.generateSuggestion(
-                for: "embeddings",
-                prompt: transcription,
-                isFromCaret: false,
-                tokenStreamCallback: { token in
-                    DispatchQueue.main.async {
-                        print("Audio transcription embeddings token received: \(token.prefix(100))")
-                    }
-                },
-                onComplete: { [weak self] result in
-                    guard let self = self else { return }
-                    switch result {
-                    case .success(let embeddingsJson):
-                        self.processEmbeddings(embeddingsJson)
-                    case .failure(let error):
-                        print("Error generating embeddings from audio transcription: \(error)")
-                        self.isGenerating = false
+    private func generateTextFromEmbeddings(embeddings: [Float], replacementRange: NSRange?) {
+        let embeddingsDict: [String: Any] = ["type": "text_embeds", "embeddings": embeddings]
+        guard let embeddingsJsonData = try? JSONSerialization.data(withJSONObject: embeddingsDict),
+              let embeddingsJsonString = String(data: embeddingsJsonData, encoding: .utf8) else {
+            print("❌ Failed to create embeddings JSON string")
+            isGenerating = false
+            appStateManager.stopGeneration()
+            return
+        }
+        
+        let prompt = "\(embeddingsJsonString)|||Generate text based on this input:"
+        let taskType = replacementRange != nil ? "rewriting" : "generation"
+        
+        llmEngine.generateSuggestion(
+            for: "caret",
+            prompt: prompt,
+            isFromCaret: true,
+            taskType: taskType,
+            tokenStreamCallback: { [weak self] token in
+                DispatchQueue.main.async {
+                    if replacementRange != nil {
+                        // For replacement, we wait for the full text.
+                    } else {
+                        self?.textInsertionHandler?(token)
                     }
                 }
-            )
-        } else {
-            print("❌ embeddings.py failed to reach running state after \(Double(maxAttempts) * checkInterval) seconds")
-            self.isGenerating = false
+            },
+            onComplete: { [weak self] result in
+                DispatchQueue.main.async {
+                    guard let self = self else { return }
+                    self.isGenerating = false
+                    self.appStateManager.stopGeneration()
+                    
+                    switch result {
+                    case .success(let fullSuggestion):
+                        if let range = replacementRange {
+                            self.textView?.textStorage?.replaceCharacters(in: range, with: fullSuggestion)
+                        } else if fullSuggestion.isEmpty {
+                            self.textView?.clearGhostText()
+                        }
+                        // If not replacing, the text was already inserted via stream.
+                    case .failure(let error):
+                        print("❌ Generation failed: \(error)")
+                        if case LLMEngine.LLMError.aborted = error {
+                            // Nothing to do on abort
+                        } else {
+                            self.textView?.clearGhostText()
+                        }
+                    }
+                }
+            }
+        )
+    }
+    
+    private func getSelectedText(from range: NSRange?) -> String? {
+        guard let range = range,
+              let textView = self.textView,
+              let textStorage = textView.textStorage,
+              range.location != NSNotFound,
+              NSMaxRange(range) <= textStorage.length else {
+            return nil
         }
+        return (textStorage.string as NSString).substring(with: range)
     }
     
     private func processEmbeddings(_ embeddingsJson: String) {
@@ -376,6 +411,7 @@ class CaretUICoordinator: ObservableObject {
                 for: "caret",
                 prompt: prompt,
                 isFromCaret: true,
+                taskType: "generation",
                 tokenStreamCallback: { [weak self] token in
                     DispatchQueue.main.async {
                         self?.textInsertionHandler?(token)
@@ -385,6 +421,8 @@ class CaretUICoordinator: ObservableObject {
                     DispatchQueue.main.async {
                         guard let self = self else { return }
                         self.isGenerating = false
+                        self.appStateManager.stopGeneration()
+                        
                         switch result {
                         case .success(let fullSuggestion):
                             if fullSuggestion.isEmpty {
@@ -404,6 +442,7 @@ class CaretUICoordinator: ObservableObject {
         } else {
             print("❌ caret.py failed to reach running state after \(Double(maxAttempts) * checkInterval) seconds")
             self.isGenerating = false
+            self.appStateManager.stopGeneration()
         }
     }
     

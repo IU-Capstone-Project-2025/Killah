@@ -8,30 +8,32 @@
 
 /* Begin PBXBuildFile section */
 		400286892DC78581002A3D68 /* Scripts in Resources */ = {isa = PBXBuildFile; fileRef = 400286882DC78581002A3D68 /* Scripts */; };
-		408AC4BF2DC7B6EE00ED87D4 /* autocomplete.py in Resources */ = {isa = PBXBuildFile; fileRef = 408AC4BC2DC7B6EE00ED87D4 /* autocomplete.py */; };
+		404EF32F2E2DA5E800BC3BFC /* custom_chat_handler.py in Resources */ = {isa = PBXBuildFile; fileRef = 404EF3242E2DA5E800BC3BFC /* custom_chat_handler.py */; };
+		404EF3302E2DA5E800BC3BFC /* run_server.py in Resources */ = {isa = PBXBuildFile; fileRef = 404EF3272E2DA5E800BC3BFC /* run_server.py */; };
+		404EF3352E2DBE4E00BC3BFC /* attention.py in Resources */ = {isa = PBXBuildFile; fileRef = 404EF3332E2DBE4E00BC3BFC /* attention.py */; };
+		404EF3362E2DBE4E00BC3BFC /* caret.py in Resources */ = {isa = PBXBuildFile; fileRef = 404EF3342E2DBE4E00BC3BFC /* caret.py */; };
+		404EF3392E2DBFAC00BC3BFC /* main_llm.py in Resources */ = {isa = PBXBuildFile; fileRef = 404EF3372E2DBFAC00BC3BFC /* main_llm.py */; };
+		404EF33A2E2DBFAC00BC3BFC /* text_to_embeddings.py in Resources */ = {isa = PBXBuildFile; fileRef = 404EF3382E2DBFAC00BC3BFC /* text_to_embeddings.py */; };
 		408AC4C02DC7B6EE00ED87D4 /* requirements.txt in Resources */ = {isa = PBXBuildFile; fileRef = 408AC4BD2DC7B6EE00ED87D4 /* requirements.txt */; };
-		40C0B9A42E15258500F0DD0D /* main_llm.py in Resources */ = {isa = PBXBuildFile; fileRef = 40C0B9A32E15258500F0DD0D /* main_llm.py */; };
-		7603C6562E2BB74F008B24DF /* caret.py in Resources */ = {isa = PBXBuildFile; fileRef = 7603C6552E2BB74F008B24DF /* caret.py */; };
-		761406632E2980D500481A70 /* attention.py in Resources */ = {isa = PBXBuildFile; fileRef = 761406622E2980D500481A70 /* attention.py */; };
-		7634DCF12E241CBD00C5A3D9 /* text_to_embeddings.py in Resources */ = {isa = PBXBuildFile; fileRef = 7634DCF02E241CBD00C5A3D9 /* text_to_embeddings.py */; };
 		7634DCF32E24282100C5A3D9 /* config.env in Resources */ = {isa = PBXBuildFile; fileRef = 7634DCF22E24282100C5A3D9 /* config.env */; };
-		766B4C212E1C5B93008E73F5 /* min_p_sampling.py in Resources */ = {isa = PBXBuildFile; fileRef = 766B4C202E1C5B93008E73F5 /* min_p_sampling.py */; };
-		76D31FC22E01EC4A00F35B70 /* audio.py in Resources */ = {isa = PBXBuildFile; fileRef = 76D31FC12E01EC4A00F35B70 /* audio.py */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		400286882DC78581002A3D68 /* Scripts */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Scripts; sourceTree = "<group>"; };
-		408AC4BC2DC7B6EE00ED87D4 /* autocomplete.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; name = autocomplete.py; path = Resources/autocomplete.py; sourceTree = "<group>"; };
+		404EF31F2E2DA5E700BC3BFC /* text_to_embeddings.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; name = text_to_embeddings.py; path = Resources/text_to_embeddings.py; sourceTree = "<group>"; };
+		404EF3202E2DA5E700BC3BFC /* min_p_sampling.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; name = min_p_sampling.py; path = Resources/min_p_sampling.py; sourceTree = "<group>"; };
+		404EF3242E2DA5E800BC3BFC /* custom_chat_handler.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; name = custom_chat_handler.py; path = Resources/custom_chat_handler.py; sourceTree = "<group>"; };
+		404EF3262E2DA5E800BC3BFC /* requirements.txt */ = {isa = PBXFileReference; lastKnownFileType = text; name = requirements.txt; path = Resources/requirements.txt; sourceTree = "<group>"; };
+		404EF3272E2DA5E800BC3BFC /* run_server.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; name = run_server.py; path = Resources/run_server.py; sourceTree = "<group>"; };
+		404EF3282E2DA5E800BC3BFC /* main_llm.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; name = main_llm.py; path = Resources/main_llm.py; sourceTree = "<group>"; };
+		404EF3332E2DBE4E00BC3BFC /* attention.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; name = attention.py; path = Resources/attention.py; sourceTree = "<group>"; };
+		404EF3342E2DBE4E00BC3BFC /* caret.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; name = caret.py; path = Resources/caret.py; sourceTree = "<group>"; };
+		404EF3372E2DBFAC00BC3BFC /* main_llm.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; name = main_llm.py; path = Resources/main_llm.py; sourceTree = "<group>"; };
+		404EF3382E2DBFAC00BC3BFC /* text_to_embeddings.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; name = text_to_embeddings.py; path = Resources/text_to_embeddings.py; sourceTree = "<group>"; };
 		408AC4BD2DC7B6EE00ED87D4 /* requirements.txt */ = {isa = PBXFileReference; lastKnownFileType = text; name = requirements.txt; path = Resources/requirements.txt; sourceTree = "<group>"; };
 		408B41602DCBA8A800318056 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		40C0B9A32E15258500F0DD0D /* main_llm.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; name = main_llm.py; path = Resources/main_llm.py; sourceTree = "<group>"; };
 		40C7315F2DC63936004D753D /* Killah Prototype.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Killah Prototype.app"; sourceTree = BUILT_PRODUCTS_DIR; };
-		7603C6552E2BB74F008B24DF /* caret.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; name = caret.py; path = Resources/caret.py; sourceTree = "<group>"; };
-		761406622E2980D500481A70 /* attention.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; name = attention.py; path = Resources/attention.py; sourceTree = "<group>"; };
-		7634DCF02E241CBD00C5A3D9 /* text_to_embeddings.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; name = text_to_embeddings.py; path = Resources/text_to_embeddings.py; sourceTree = "<group>"; };
 		7634DCF22E24282100C5A3D9 /* config.env */ = {isa = PBXFileReference; lastKnownFileType = text; name = config.env; path = Resources/config.env; sourceTree = "<group>"; };
-		766B4C202E1C5B93008E73F5 /* min_p_sampling.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; name = min_p_sampling.py; path = Resources/min_p_sampling.py; sourceTree = "<group>"; };
-		76D31FC12E01EC4A00F35B70 /* audio.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; name = audio.py; path = Resources/audio.py; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -56,15 +58,18 @@
 		40C731562DC63936004D753D = {
 			isa = PBXGroup;
 			children = (
-				7603C6552E2BB74F008B24DF /* caret.py */,
-				761406622E2980D500481A70 /* attention.py */,
+				404EF3372E2DBFAC00BC3BFC /* main_llm.py */,
+				404EF3382E2DBFAC00BC3BFC /* text_to_embeddings.py */,
+				404EF3332E2DBE4E00BC3BFC /* attention.py */,
+				404EF3342E2DBE4E00BC3BFC /* caret.py */,
+				404EF3242E2DA5E800BC3BFC /* custom_chat_handler.py */,
+				404EF3282E2DA5E800BC3BFC /* main_llm.py */,
+				404EF3202E2DA5E700BC3BFC /* min_p_sampling.py */,
+				404EF3262E2DA5E800BC3BFC /* requirements.txt */,
+				404EF3272E2DA5E800BC3BFC /* run_server.py */,
+				404EF31F2E2DA5E700BC3BFC /* text_to_embeddings.py */,
 				7634DCF22E24282100C5A3D9 /* config.env */,
-				7634DCF02E241CBD00C5A3D9 /* text_to_embeddings.py */,
-				766B4C202E1C5B93008E73F5 /* min_p_sampling.py */,
-				40C0B9A32E15258500F0DD0D /* main_llm.py */,
-				76D31FC12E01EC4A00F35B70 /* audio.py */,
 				408B41602DCBA8A800318056 /* Info.plist */,
-				408AC4BC2DC7B6EE00ED87D4 /* autocomplete.py */,
 				408AC4BD2DC7B6EE00ED87D4 /* requirements.txt */,
 				400286882DC78581002A3D68 /* Scripts */,
 				40C731612DC63936004D753D /* Killah Prototype */,
@@ -149,15 +154,14 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				7603C6562E2BB74F008B24DF /* caret.py in Resources */,
-				761406632E2980D500481A70 /* attention.py in Resources */,
-				7634DCF32E24282100C5A3D9 /* config.env in Resources */,
-				7634DCF12E241CBD00C5A3D9 /* text_to_embeddings.py in Resources */,
-				766B4C212E1C5B93008E73F5 /* min_p_sampling.py in Resources */,
-				40C0B9A42E15258500F0DD0D /* main_llm.py in Resources */,
-				76D31FC22E01EC4A00F35B70 /* audio.py in Resources */,
-				408AC4BF2DC7B6EE00ED87D4 /* autocomplete.py in Resources */,
+				404EF3392E2DBFAC00BC3BFC /* main_llm.py in Resources */,
+				404EF33A2E2DBFAC00BC3BFC /* text_to_embeddings.py in Resources */,
+				404EF3352E2DBE4E00BC3BFC /* attention.py in Resources */,
+				404EF3362E2DBE4E00BC3BFC /* caret.py in Resources */,
+				404EF32F2E2DA5E800BC3BFC /* custom_chat_handler.py in Resources */,
 				408AC4C02DC7B6EE00ED87D4 /* requirements.txt in Resources */,
+				404EF3302E2DA5E800BC3BFC /* run_server.py in Resources */,
+				7634DCF32E24282100C5A3D9 /* config.env in Resources */,
 				400286892DC78581002A3D68 /* Scripts in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

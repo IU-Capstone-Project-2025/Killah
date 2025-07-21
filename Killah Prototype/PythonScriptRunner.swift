@@ -5,7 +5,7 @@ protocol PythonScriptRunner {
     var scriptName: String { get }
     var state: LLMEngine.EngineState { get }
     func start()
-    func sendData(_ data: String, tokenStreamCallback: @escaping (String) -> Void, onComplete: @escaping (Result<String, LLMEngine.LLMError>) -> Void)
+    func sendData(_ data: String, loraPath: String?, tokenStreamCallback: @escaping (String) -> Void, onComplete: @escaping (Result<String, LLMEngine.LLMError>) -> Void)
     func sendCommand(_ command: String)
     func stop()
     func abortSuggestion(notifyPython: Bool)
@@ -114,7 +114,7 @@ class BaseScriptRunner: NSObject, PythonScriptRunner {
         }
     }
 
-    func sendData(_ data: String, tokenStreamCallback: @escaping (String) -> Void, onComplete: @escaping (Result<String, LLMEngine.LLMError>) -> Void) {
+    func sendData(_ data: String, loraPath: String? = nil, tokenStreamCallback: @escaping (String) -> Void, onComplete: @escaping (Result<String, LLMEngine.LLMError>) -> Void) {
         guard let runningTask = task, runningTask.isRunning, let stdin = stdinPipe else {
             print("❌ \(scriptName) not running or stdin not available. Current state: \(state)")
             onComplete(.failure(.engineNotRunning))
@@ -137,8 +137,28 @@ class BaseScriptRunner: NSObject, PythonScriptRunner {
         accumulatedOutput = ""
         isAbortedManually = false
 
-        print("➡️ Sending data to \(scriptName): \"\(data.suffix(100))\"")
-        guard let inputData = (data + "\n").data(using: .utf8) else {
+        var payload: String
+        if let lora = loraPath {
+            // Если есть LoRA, создаем JSON
+            let jsonObject: [String: Any] = [
+                "prompt": data,
+                "lora_path": lora
+            ]
+            if let jsonData = try? JSONSerialization.data(withJSONObject: jsonObject),
+               let jsonString = String(data: jsonData, encoding: .utf8) {
+                payload = jsonString
+            } else {
+                print("❌ Error creating JSON payload for LoRA.")
+                onComplete(.failure(.promptEncodingError))
+                return
+            }
+        } else {
+            // Иначе отправляем как обычный текст
+            payload = data
+        }
+
+        print("➡️ Sending data to \(scriptName): \"\(payload.suffix(200))\"")
+        guard let inputData = (payload + "\n").data(using: .utf8) else {
             print("❌ Error encoding data to UTF-8.")
             currentCompletionCallback?(.failure(.promptEncodingError))
             currentTokenCallback = nil
