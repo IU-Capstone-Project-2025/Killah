@@ -45,11 +45,7 @@ class ModelProxy:
             "stream": stream
         }
         if lora_adapter:
-            print(f"Applying LoRA: {lora_adapter}", file=sys.stderr, flush=True)
-            payload["lora_path"] = lora_adapter
-
-        endpoint = f"{self.server_url}/custom_completion"
-
+            payload["lora_adapters"] = [{"path": lora_adapter, "scale": 1.0}]
         if stream:
             response = requests.post(endpoint, json=payload, stream=True)
             response.raise_for_status()
