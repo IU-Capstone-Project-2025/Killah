@@ -201,7 +201,6 @@ class LLMEngine: ObservableObject {
             return .failure(error as? LLMEngine.LLMError ?? .scriptError("Unknown context embedding error"))
         }
 
-        print("ℹ️ Контекстный эмбеддинг получен. Размер: \(contextEmbedding?.count ?? 0)")
         return .success(contextEmbedding)
     }
 

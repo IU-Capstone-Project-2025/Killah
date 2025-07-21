@@ -1199,6 +1199,34 @@ class CustomInlineNSTextView: NSTextView {
         super.keyDown(with: event)
         notifyDelegate()
     }
+
+    override func doCommand(by selector: Selector) {
+        if selector == #selector(insertTab(_:)) {
+            if self.ghostText() != nil {
+                llmInteractionDelegate?.acceptSuggestion()
+            } else {
+                 if let coordinator = delegate as? InlineSuggestingTextView.Coordinator {
+                    coordinator.caretCoordinator?.triggerBounceRight = true
+                    // Force-generate suggestion for current context
+                    coordinator.parent.debouncer.debounce { [weak coordinator, weak self] in
+                        guard let coordinator = coordinator, let self = self else { return }
+                        coordinator.requestTextCompletion(for: self)
+                    }
+                }
+            }
+            return
+        }
+        
+        if selector == #selector(cancelOperation(_:)) {
+            if let coordinator = delegate as? InlineSuggestingTextView.Coordinator {
+                coordinator.caretCoordinator?.triggerBounceLeft = true
+            }
+            llmInteractionDelegate?.dismissSuggestion()
+            return
+        }
+        
+        super.doCommand(by: selector)
+    }
     
     // Override deleteBackward to remove entire marker when cursor is anywhere within the marker prefix, not just at its end, and re-number decimal lists
     override func deleteBackward(_ sender: Any?) {

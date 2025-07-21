@@ -49,6 +49,8 @@ def get_lora_path(task_type="autocomplete"):
 def stream_generation(prompt_data: dict):
     """Стримим генерацию через HTTP запрос к серверу с LoRA адаптером и персонализацией"""
     
+    global interrupted  # Добавляем доступ к глобальной переменной
+    
     actual_prompt = prompt_data.get("prompt", "")
     task_type = prompt_data.get("task_type", "autocomplete")
     lora_path = prompt_data.get("lora_path", get_lora_path(task_type))
@@ -89,6 +91,10 @@ def stream_generation(prompt_data: dict):
         
         buffer = ""
         for chunk in response.iter_content(chunk_size=1, decode_unicode=True):
+            if interrupted:  # Проверяем прерывание на каждом чанке
+                print(f"[GENERATION] Interrupted during streaming.", file=sys.stderr, flush=True)
+                return
+            
             if not chunk:
                 continue
             
@@ -128,7 +134,7 @@ if __name__ == "__main__":
         print("READY", flush=True)
 
     current_request_data = None
-    interrupted = False
+    interrupted = False  # Глобальная переменная для прерывания
     
     while True:
         try:

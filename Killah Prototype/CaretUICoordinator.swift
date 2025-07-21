@@ -353,126 +353,101 @@ class CaretUICoordinator: ObservableObject {
     
     func generateFromAudioTranscription(_ transcriptionOrJson: String) {
         guard !transcriptionOrJson.isEmpty else {
-            print("⚠️ Empty transcription or JSON, skipping generation")
+            print("⚠️ Empty transcription, skipping generation")
             return
         }
-        
-        llmEngine.abortSuggestion(for: "autocomplete")
+
         appStateManager.startGeneration(from: .audio)
         isGenerating = true
-        
-        // Collapse the UI as soon as generation starts
         collapseUI()
-        
+
         let selectedRange = self.textView?.selectedRange
         let selectedText = getSelectedText(from: selectedRange)
-        
         let taskType = selectedRange != nil ? "rewriting" : "generation"
+
+        // Проверяем, что пришло от audio.py: JSON или просто текст
         var finalPrompt: String
-        
-        // Check if the input is JSON (for embeddings) or plain text (for transcription)
-        do {
-            if transcriptionOrJson.starts(with: "{\"type\":"),
-               let data = transcriptionOrJson.data(using: .utf8),
-               let json = try JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
-               let type = json["type"] as? String {
-                
-                if type == "projected_audio_embeds" {
-                    // Handle embeddings
-                    if let embeddings = json["embeddings"] as? [[Double]] {
-                        let embeddingsJson: [String: Any] = [
-                            "type": "projected_audio_embeds",
-                            "embeddings": embeddings,
-                            "prompt": selectedText ?? ""
-                        ]
-                        guard let embeddingsJsonData = try? JSONSerialization.data(withJSONObject: embeddingsJson),
-                              let embeddingsJsonString = String(data: embeddingsJsonData, encoding: .utf8) else {
-                            print("❌ Failed to create embeddings JSON string")
-                            isGenerating = false
-                            appStateManager.stopGeneration()
-                            return
-                        }
-                        finalPrompt = embeddingsJsonString
+        var isFromCaret: Bool = false
+
+        // Пытаемся распарсить как JSON
+        if let data = transcriptionOrJson.data(using: .utf8),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let type = json["type"] as? String {
+            
+            if type == "projected_audio_embeds" {
+                // Это аудио-эмбеддинги - передаем JSON как есть
+                finalPrompt = transcriptionOrJson
+                isFromCaret = true
+            } else if type == "transcription" {
+                // Это транскрипция в JSON-формате - извлекаем текст
+                if let text = json["text"] as? String {
+                    if let selected = selectedText, !selected.isEmpty {
+                        finalPrompt = text.isEmpty ? selected : "\(selected) : \(text)"
                     } else {
-                        print("❌ Invalid embeddings JSON: missing or invalid 'embeddings' field")
-                        isGenerating = false
-                        appStateManager.stopGeneration()
-                        return
-                    }
-                } else if type == "transcription" {
-                    // Handle transcription
-                    if let text = json["text"] as? String {
-                        if let selected = selectedText, !selected.isEmpty {
-                            finalPrompt = text.isEmpty ? selected : "\(selected) : \(text)"
-                        } else {
-                            finalPrompt = text
-                        }
-                    } else {
-                        print("❌ Invalid transcription JSON: missing 'text' field")
-                        isGenerating = false
-                        appStateManager.stopGeneration()
-                        return
+                        finalPrompt = text
                     }
                 } else {
-                    print("❌ Unknown JSON type: \(type)")
+                    print("❌ Invalid transcription JSON: missing 'text' field")
                     isGenerating = false
                     appStateManager.stopGeneration()
                     return
                 }
+                isFromCaret = false
             } else {
-                // Assume plain text transcription for backward compatibility
-                if let selected = selectedText, !selected.isEmpty {
-                    finalPrompt = transcriptionOrJson.isEmpty ? selected : "\(selected) : \(transcriptionOrJson)"
-                } else {
-                    finalPrompt = transcriptionOrJson
+                print("❌ Unknown JSON type: \(type)")
+                isGenerating = false
+                appStateManager.stopGeneration()
+                return
+            }
+        } else {
+            // Это просто текст (backward compatibility)
+            if let selected = selectedText, !selected.isEmpty {
+                finalPrompt = transcriptionOrJson.isEmpty ? selected : "\(selected) : \(transcriptionOrJson)"
+            } else {
+                finalPrompt = transcriptionOrJson
+            }
+            isFromCaret = false
+        }
+
+        // Генерируем предложение
+        llmEngine.generateSuggestion(
+            for: "generation",
+            prompt: finalPrompt,
+            isFromCaret: isFromCaret,
+            taskType: taskType,
+            tokenStreamCallback: { [weak self] token in
+                DispatchQueue.main.async {
+                    if selectedRange != nil {
+                        // Для замены текста ждем полный результат
+                    } else {
+                        self?.textInsertionHandler?(token)
+                    }
+                }
+            },
+            onComplete: { [weak self] result in
+                DispatchQueue.main.async {
+                    guard let self = self else { return }
+                    self.isGenerating = false
+                    self.appStateManager.stopGeneration()
+                    
+                    switch result {
+                    case .success(let fullSuggestion):
+                        if let range = selectedRange {
+                            self.textView?.textStorage?.replaceCharacters(in: range, with: fullSuggestion)
+                        } else if fullSuggestion.isEmpty {
+                            self.textView?.clearGhostText()
+                        }
+                    case .failure(let error):
+                        print("❌ Generation failed: \(error)")
+                        if case LLMEngine.LLMError.aborted = error {
+                            // Nothing to do on abort
+                        } else {
+                            self.textView?.clearGhostText()
+                        }
+                    }
                 }
             }
-            
-            // Generate suggestion
-            llmEngine.generateSuggestion(
-                for: "autocomplete",
-                prompt: finalPrompt,
-                isFromCaret: finalPrompt.starts(with: "{\"type\":\"projected_audio_embeds\""),
-                taskType: taskType,
-                tokenStreamCallback: { [weak self] token in
-                    DispatchQueue.main.async {
-                        if selectedRange != nil {
-                            // For replacement, wait for the full text
-                        } else {
-                            self?.textInsertionHandler?(token)
-                        }
-                    }
-                },
-                onComplete: { [weak self] result in
-                    DispatchQueue.main.async {
-                        guard let self = self else { return }
-                        self.isGenerating = false
-                        self.appStateManager.stopGeneration()
-                        
-                        switch result {
-                        case .success(let fullSuggestion):
-                            if let range = selectedRange {
-                                self.textView?.textStorage?.replaceCharacters(in: range, with: fullSuggestion)
-                            } else if fullSuggestion.isEmpty {
-                                self.textView?.clearGhostText()
-                            }
-                            // If not replacing, text was already inserted via stream
-                        case .failure(let error):
-                            print("❌ Generation failed: \(error)")
-                            if case LLMEngine.LLMError.aborted = error {
-                                // Nothing to do on abort
-                            } else {
-                                self.textView?.clearGhostText()
-                            }
-                        }
-                    }
-                }
-            )
-        } catch {
-            print("❌ Error parsing JSON: \(error)")
-            isGenerating = false
-            appStateManager.stopGeneration()
-        }
+        )
     }
 
     private func generateTextFromEmbeddings(embeddings: [Float], replacementRange: NSRange?) {

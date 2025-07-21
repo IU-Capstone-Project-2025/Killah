@@ -139,7 +139,7 @@ class BaseScriptRunner: NSObject, PythonScriptRunner {
 
         let payload = data // Data is now a pre-formatted JSON string
 
-        print("➡️ Sending data to \(scriptName): \"\(payload.prefix(200))\"")
+        print("➡️ Sending data to \(scriptName): \"\(payload.prefix(200))...\"")
         guard let inputData = (payload + "\n").data(using: .utf8) else {
             print("❌ Error encoding data to UTF-8.")
             currentCompletionCallback?(.failure(.promptEncodingError))
@@ -170,7 +170,7 @@ class BaseScriptRunner: NSObject, PythonScriptRunner {
 
         if notifyPython, let runningTask = task, runningTask.isRunning, let stdin = stdinPipe {
             print("➡️ Sending abort signal to \(scriptName) stdin")
-            guard let data = "\n".data(using: .utf8) else {
+            guard let data = "CMD:ABORT\n".data(using: .utf8) else {
                 print("❌ Error encoding abort signal")
                 currentCompletionCallback?(.failure(.promptEncodingError))
                 return
