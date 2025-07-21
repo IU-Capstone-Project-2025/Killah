@@ -283,20 +283,62 @@ class CaretUICoordinator: ObservableObject {
         
         promptText = ""
         
-        // 5. Generate embeddings
-        llmEngine.generateEmbedding(for: finalPrompt) { [weak self] result in
-            guard let self = self else { return }
-            
-            switch result {
-            case .success(let embeddings):
-                // 6. Generate the final text using the embeddings
-                self.generateTextFromEmbeddings(embeddings: embeddings, replacementRange: selectedRange)
-            case .failure(let error):
-                print("Error generating embeddings: \(error)")
-                self.isGenerating = false
-                self.appStateManager.stopGeneration()
+//        // 5. Generate embeddings
+//        llmEngine.generateEmbedding(for: finalPrompt) { [weak self] result in
+//            guard let self = self else { return }
+//            
+//            switch result {
+//            case .success(let embeddings):
+//                // 6. Generate the final text using the embeddings
+//                self.generateTextFromEmbeddings(embeddings: embeddings, replacementRange: selectedRange)
+//            case .failure(let error):
+//                print("Error generating embeddings: \(error)")
+//                self.isGenerating = false
+//                self.appStateManager.stopGeneration()
+//            }
+//        }
+        
+        let taskType = selectedRange != nil ? "rewriting" : "generation"
+        
+        llmEngine.generateSuggestion(
+            for: "autocomplete",
+            prompt: finalPrompt,
+            isFromCaret: false,
+            taskType: taskType,
+            tokenStreamCallback: { [weak self] token in
+                DispatchQueue.main.async {
+                    if selectedRange != nil {
+                        // For replacement, we wait for the full text.
+                    } else {
+                        self?.textInsertionHandler?(token)
+                    }
+                }
+            },
+            onComplete: { [weak self] result in
+                DispatchQueue.main.async {
+                    guard let self = self else { return }
+                    self.isGenerating = false
+                    self.appStateManager.stopGeneration()
+                    
+                    switch result {
+                    case .success(let fullSuggestion):
+                        if let range = selectedRange {
+                            self.textView?.textStorage?.replaceCharacters(in: range, with: fullSuggestion)
+                        } else if fullSuggestion.isEmpty {
+                            self.textView?.clearGhostText()
+                        }
+                        // If not replacing, the text was already inserted via stream.
+                    case .failure(let error):
+                        print("❌ Generation failed: \(error)")
+                        if case LLMEngine.LLMError.aborted = error {
+                            // Nothing to do on abort
+                        } else {
+                            self.textView?.clearGhostText()
+                        }
+                    }
+                }
             }
-        }
+        )
     }
     
     func generateFromAudioTranscription(_ transcription: String) {
@@ -336,7 +378,7 @@ class CaretUICoordinator: ObservableObject {
             return
         }
         
-        let prompt = "\(embeddingsJsonString)|||Generate text based on this input:"
+        let prompt = embeddingsJsonString
         let taskType = replacementRange != nil ? "rewriting" : "generation"
         
         llmEngine.generateSuggestion(

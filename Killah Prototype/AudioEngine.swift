@@ -386,6 +386,15 @@ class AudioEngine: NSObject, ObservableObject, SFSpeechRecognizerDelegate {
                             switch result {
                             case .success(let resultJson):
                                 self.processAudioResult(resultJson, generateEmbeddings: generateEmbeddings)
+                                do {
+                                    if FileManager.default.fileExists(atPath: audioFilePath.path) {
+                                        try FileManager.default.removeItem(at: audioFilePath)
+                                        print("✅ Deleted audio file at: \(audioFilePath.absoluteString)")
+                                    }
+                                } catch {
+                                    print("❌ Failed to delete audio file at \(audioFilePath.absoluteString): \(error)")
+                                }
+                                
                             case .failure(let error):
                                 print("Failed to process audio: \(error)")
                             }

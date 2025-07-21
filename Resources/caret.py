@@ -72,12 +72,11 @@ def stream_from_embeddings_and_prompt(model, embeddings=None, embeddings_type=No
         full_prompt = f"{base_prompt}{prompt_text}<end_of_turn>\n<start_of_turn>model\n"
 
     response = model.create_completion(
-        prompt=full_prompt,
+        prompt=full_prompt, # Need to add LoRA adapter to the prompt
         max_tokens=10,
         temperature=0.8,
         min_p=0.1,
         stream=True,
-        lora_adapter=lora_adapter
     )
     
     buffer = ""
@@ -115,32 +114,23 @@ if __name__ == "__main__":
             embeddings = None
             embeddings_type = None
             prompt = line
-            if "|||" in line:
-                parts = line.split("|||", 1)
-                result_json = parts[0].strip()
-                prompt = parts[1].strip()
-                try:
-                    data = json.loads(result_json)
-                    embeddings_type = data.get("type")
-                    if embeddings_type == "transcription":
-                        print(f"Received transcription: {data.get('text')}", file=sys.stderr, flush=True)
-                        embeddings = None  # No embeddings for transcription
-                        prompt = data.get("text", "")
-                    else:
-                        embeddings = torch.tensor(data.get("embeddings"), dtype=torch.float32)
-                        print(f"Received embeddings of type: {embeddings_type}, shape: {embeddings.shape}", file=sys.stderr, flush=True)
-                except json.JSONDecodeError as e:
-                    print(f"Error parsing result JSON: {e}", file=sys.stderr, flush=True)
-                except Exception as e:
-                    print(f"Error processing result: {e}", file=sys.stderr, flush=True)
+            result_json = prompt
             
-            if ":" in prompt:
-                text, user_prompt = prompt.split(":", 1)
-                prompt = f"{text.strip()} : {user_prompt.strip()}"
-            else:
-                prompt = prompt.strip()
-
-            print(f"Processing with prompt: {prompt[-100:]}", file=sys.stderr, flush=True)
+            try:
+                data = json.loads(result_json)
+                embeddings_type = data.get("type")
+                if embeddings_type == "transcription":
+                    print(f"Received transcription: {data.get('text')}", file=sys.stderr, flush=True)
+                    embeddings = None  # No embeddings for transcription
+                    prompt = data.get("text", "")
+                else:
+                    embeddings = torch.tensor(data.get("embeddings"), dtype=torch.float32)
+                    print(f"Received embeddings of type: {embeddings_type}, shape: {embeddings.shape}", file=sys.stderr, flush=True)
+            except json.JSONDecodeError as e:
+                print(f"Error parsing result JSON: {e}", file=sys.stderr, flush=True)
+            except Exception as e:
+                print(f"Error processing result: {e}", file=sys.stderr, flush=True)
+        
             if embeddings is not None:
                 print(f"Using embeddings of shape: {embeddings.shape}", file=sys.stderr, flush=True)
 

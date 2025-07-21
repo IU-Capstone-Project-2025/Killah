@@ -11,6 +11,12 @@ struct EmbeddingResponse: Codable {
     let embeddings: [Float]
 }
 
+// Structure for decoding attention weights and indices from attention.py
+struct AttentionResponse: Codable {
+    let weights: [Double]
+    let indices: [Int]
+}
+
 class LLMEngine: ObservableObject {
     @Published var suggestion: String = ""
     @Published var engineState: EngineState = .idle
@@ -121,6 +127,7 @@ class LLMEngine: ObservableObject {
             let docURLs = personalizedDocs.map { $0.url }
             
             var augmentedPrompt = prompt
+            var weightedDocumentEmbedding: [Float]?
             
             if !docEmbeddings.isEmpty {
                 let attentionResult = await computeAttentionWithEmbeddings(
@@ -131,8 +138,9 @@ class LLMEngine: ObservableObject {
                 )
                 
                 switch attentionResult {
-                case .success(let finalPrompt):
-                    augmentedPrompt = finalPrompt
+                case .success(let result):
+                    augmentedPrompt = result.prompt
+                    weightedDocumentEmbedding = result.weightedEmbedding
                 case .failure(let error):
                     print("⚠️ Attention computation failed: \(error). Proceeding without context.")
                 }
@@ -142,6 +150,7 @@ class LLMEngine: ObservableObject {
                 script: script,
                 prompt: augmentedPrompt,
                 loraAdapter: loraAdapterPath,
+                weightedDocumentEmbedding: weightedDocumentEmbedding,
                 tokenStreamCallback: tokenStreamCallback,
                 onComplete: onComplete
             )
@@ -154,7 +163,7 @@ class LLMEngine: ObservableObject {
         isFromCaret: Bool,
         docEmbeddings: [[Float]],
         docURLs: [URL]
-    ) async -> Result<String, LLMEngine.LLMError> {
+    ) async -> Result<(prompt: String, weightedEmbedding: [Float]?), LLMEngine.LLMError> {
         
         let targetEmbedding: [Float]
         if isFromCaret {
@@ -175,9 +184,9 @@ class LLMEngine: ObservableObject {
             }
         }
         
-        let weights: [Double]
+        let attentionResult: AttentionResponse
         do {
-            weights = try await withCheckedThrowingContinuation { continuation in
+            attentionResult = try await withCheckedThrowingContinuation { continuation in
                 computeAttentionWeights(target: targetEmbedding, histories: docEmbeddings) { result in
                     continuation.resume(with: result)
                 }
@@ -185,21 +194,30 @@ class LLMEngine: ObservableObject {
         } catch {
             return .failure(error as? LLMEngine.LLMError ?? .scriptError("Unknown attention weights error"))
         }
+
+        let weights = attentionResult.weights
+        let indices = attentionResult.indices
+        print("ℹ️ Selected top \(indices.count) documents with weights: \(weights) and indices: \(indices)")
         
-        print("ℹ️ Веса внимания: \(weights)")
-        let threshold = 0.5
-        var selectedEmbeddings: [URL] = []
-        for (index, weight) in weights.enumerated() where weight > threshold {
-            let embedURL = docURLs[index].deletingPathExtension().appendingPathExtension("pt")
-            selectedEmbeddings.append(embedURL)
+        var weightedEmbedding: [Float]?
+        if !weights.isEmpty && !indices.isEmpty {
+            // Normalize weights to sum to 1
+            let weightSum = weights.reduce(0, +)
+            let normalizedWeights = weights.map { $0 / weightSum }
+
+            // Compute weighted sum of embeddings
+            let embeddingSize = docEmbeddings[indices[0]].count
+            var weightedSum = [Float](repeating: 0.0, count: embeddingSize)
+            for (index, weight) in zip(indices, normalizedWeights) {
+                let embedding = docEmbeddings[index]
+                for i in 0..<embeddingSize {
+                    weightedSum[i] += embedding[i] * Float(weight)
+                }
+            }
+            weightedEmbedding = weightedSum
         }
-        print("ℹ️ Выбрано эмбеддингов: \(selectedEmbeddings.count)")
         
-        var augmentedPrompt = prompt
-        if !selectedEmbeddings.isEmpty {
-            augmentedPrompt += "\n[Контекст из персонализированных документов]"
-        }
-        return .success(augmentedPrompt)
+        return .success((prompt: prompt, weightedEmbedding: weightedEmbedding))
     }
 
     
@@ -208,6 +226,7 @@ class LLMEngine: ObservableObject {
         script: String,
         prompt: String,
         loraAdapter: String?,
+        weightedDocumentEmbedding: [Float]?,
         tokenStreamCallback: @escaping (String) -> Void,
         onComplete: @escaping (Result<String, LLMEngine.LLMError>) -> Void
     ) {
@@ -238,17 +257,47 @@ class LLMEngine: ObservableObject {
             return
         }
 
-        runner.sendData(prompt, loraPath: loraAdapter, tokenStreamCallback: tokenStreamCallback) { result in
-            self.activeTasks[script] = false // Сбрасываем состояние после завершения
-            switch result {
-            case .success(let suggestion):
-                CacheManager.shared.setCachedSuggestion(suggestion, for: prompt, temperature: self.currentTemperature)
-                onComplete(.success(suggestion))
-            case .failure(let error):
-                onComplete(.failure(error))
-            }
+        // Prepare JSON payload with weighted document embedding
+        var content: [String: Any] = ["prompt": prompt]
+        if let embedding = weightedDocumentEmbedding {
+            content["weighted_document_embedding"] = embedding
         }
-        updateEngineState(runner.state)
+        let payload: [String: Any] = [
+            "messages": [
+                [
+                    "role": "user",
+                    "content": content
+                ]
+            ],
+            "max_tokens": 50,
+            "temperature": currentTemperature,
+            "min_p": 0.1,
+            "stream": true,
+            "lora_path": loraAdapter ?? ""
+        ]
+
+        
+        do {
+            let jsonData = try JSONSerialization.data(withJSONObject: payload)
+            guard let jsonString = String(data: jsonData, encoding: .utf8) else {
+                onComplete(.failure(.promptEncodingError))
+                return
+            }
+
+            runner.sendData(jsonString, loraPath: loraAdapter, tokenStreamCallback: tokenStreamCallback) { result in
+                self.activeTasks[script] = false
+                switch result {
+                case .success(let suggestion):
+                    CacheManager.shared.setCachedSuggestion(suggestion, for: prompt, temperature: self.currentTemperature)
+                    onComplete(.success(suggestion))
+                case .failure(let error):
+                    onComplete(.failure(error))
+                }
+            }
+            updateEngineState(runner.state)
+        } catch {
+            onComplete(.failure(.promptEncodingError))
+        }
     }
     
     // Вспомогательные функции для извлечения и парсинга эмбеддингов
@@ -280,7 +329,7 @@ class LLMEngine: ObservableObject {
     func computeAttentionWeights(
         target: [Float],
         histories: [[Float]],
-        onComplete: @escaping (Result<[Double], LLMEngine.LLMError>) -> Void
+        onComplete: @escaping (Result<AttentionResponse, LLMEngine.LLMError>) -> Void
     ) {
         guard let runner = runners["attention"] else {
             onComplete(.failure(.scriptError("Attention runner not found")))
@@ -303,8 +352,8 @@ class LLMEngine: ObservableObject {
                 switch result {
                 case .success(let output):
                     do {
-                        let weights = try JSONDecoder().decode([Double].self, from: Data(output.utf8))
-                        onComplete(.success(weights))
+                        let response = try JSONDecoder().decode(AttentionResponse.self, from: Data(output.utf8))
+                        onComplete(.success(response))
                     } catch {
                         onComplete(.failure(.scriptError("Failed to parse attention weights: \(error)")))
                     }
