@@ -233,17 +233,53 @@ class LLMEngine: ObservableObject {
             onComplete(.failure(.scriptError("Unknown script: \(script)")))
             return
         }
-
-        runner.sendData(prompt, loraPath: loraAdapter, contextEmbedding: contextEmbedding, tokenStreamCallback: tokenStreamCallback) { result in
-            self.activeTasks[script] = false // Сбрасываем состояние после завершения
-            switch result {
-            case .success(let suggestion):
-                CacheManager.shared.setCachedSuggestion(suggestion, for: prompt, temperature: self.currentTemperature)
-                onComplete(.success(suggestion))
-            case .failure(let error):
-                onComplete(.failure(error))
+        
+        if script == "autocomplete" {
+            let jsonData: [String: Any] = [
+                "prompt": prompt,
+                "lora_path": loraAdapter ?? "",
+                "context_embedding": contextEmbedding ?? NSNull(),
+                "max_tokens": 50,
+                "temperature": 0.7,
+                "min_p": 0.1,
+                "stream": true
+            ]
+            do {
+            let jsonDataSerialized = try JSONSerialization.data(withJSONObject: jsonData)
+            guard let jsonString = String(data: jsonDataSerialized, encoding: .utf8),
+                  let runner = runners[script] else {
+                onComplete(.failure(.scriptError("Failed to serialize JSON or unknown script: \(script)")))
+                return
+            }
+            runner.sendData(jsonString, loraPath: nil, contextEmbedding: nil, tokenStreamCallback: tokenStreamCallback) { result in
+                self.activeTasks[script] = false // Сбрасываем состояние после завершения
+                switch result {
+                case .success(let suggestion):
+                    CacheManager.shared.setCachedSuggestion(suggestion, for: prompt, temperature: self.currentTemperature)
+                    onComplete(.success(suggestion))
+                case .failure(let error):
+                    onComplete(.failure(error))
+                }
             }
         }
+        catch {
+            onComplete(.failure(.scriptError("JSON serialization failed: \(error.localizedDescription)")))
+        }
+        } else {
+            runner.sendData(prompt, loraPath: nil, contextEmbedding: nil, tokenStreamCallback: tokenStreamCallback) { result in
+                self.activeTasks[script] = false // Сбрасываем состояние после завершения
+                switch result {
+                case .success(let suggestion):
+                    CacheManager.shared.setCachedSuggestion(suggestion, for: prompt, temperature: self.currentTemperature)
+                    onComplete(.success(suggestion))
+                case .failure(let error):
+                    onComplete(.failure(error))
+                }
+            }
+        }
+        
+        
+        
         updateEngineState(runner.state)
     }
     

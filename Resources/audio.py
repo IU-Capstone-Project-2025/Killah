@@ -208,16 +208,20 @@ if __name__ == "__main__":
                     print("EOF received, exiting audio.py.", file=sys.stderr, flush=True)
                     break
                 if "|||" in line:
-                path, generateEmbeddings = line.split("|||")
-                if ".wav" in path:
-                    file_path = path.strip()
-                    if not file_path:
-                        continue
+                    path, generateEmbeddings = line.split("|||")
+                    if generateEmbeddings == "false":
+                        flag = False
+                    else:
+                        flag = True
+                    if ".wav" in path:
+                        file_path = path.strip()
+                        if not file_path:
+                            continue
                     
-                    print(f"Received audio file path: {file_path}", file=sys.stderr, flush=True)
-                    result = process_audio_file(file_path, generateEmbeddings)
-                    if result is None:
-                        print(f"Processing failed for {file_path}", file=sys.stderr, flush=True)
+                        print(f"Received audio file path: {file_path}", file=sys.stderr, flush=True)
+                        result = process_audio_file(file_path, flag)
+                        if result is None:
+                            print(f"Processing failed for {file_path}", file=sys.stderr, flush=True)
                 else:
                     print(f"Context: {line} received", file=sys.stderr, flush=True)
 

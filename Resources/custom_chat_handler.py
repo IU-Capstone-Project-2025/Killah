@@ -186,6 +186,7 @@ class CustomEmbeddingChatHandler:
 
         prompt_text = request.get("prompt", "")
         context_embedding = request.get("context_embedding")
+        audio_embeddings = request.get("audio_embeddings")
 
         text_tokens = llm_instance.tokenize(prompt_text.encode("utf-8"), add_bos=False)
         

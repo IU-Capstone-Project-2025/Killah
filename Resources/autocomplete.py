@@ -79,6 +79,13 @@ def stream_suggestions(prompt_text: str, temperature: float, lora_path: str, min
         actual_prompt = payload_from_swift.get("prompt", "")
         lora_path = payload_from_swift.get("lora_path", lora_path)
         context_embedding = payload_from_swift.get("context_embedding", context_embedding)
+        audio_embeddings = []
+        # Поддержка transcription
+        if payload_from_swift.get("type") == "transcription":
+            actual_prompt = payload_from_swift.get("text", "")
+        # Поддержка projected_audio_embeds
+        elif payload_from_swift.get("type") == "projected_audio_embeds":
+            audio_embeddings = payload_from_swift.get("embeddings", [[]])
     except json.JSONDecodeError:
         actual_prompt = prompt_text
 
@@ -88,7 +95,8 @@ def stream_suggestions(prompt_text: str, temperature: float, lora_path: str, min
         "temperature": temperature,
         "min_p": min_p,
         "stream": True,
-        "lora_path": lora_path
+        "lora_path": lora_path,
+        "audio_embeddings": audio_embeddings
     }
     
     if context_embedding:
