@@ -11,6 +11,12 @@ struct EmbeddingResponse: Codable {
     let embeddings: [Float]
 }
 
+// Structure for decoding projected embeddings from projection.py
+struct ProjectedEmbeddingResponse: Codable {
+    let type: String
+    let embedding: [Float]
+}
+
 // Structure for decoding attention weights and indices from attention.py
 struct AttentionResponse: Codable {
     let weights: [Double]
@@ -79,6 +85,7 @@ class LLMEngine: ObservableObject {
         runners["generation"] = GenerationScriptRunner(modelDirectory: modelDir)
         runners["embeddings"] = EmbeddingsRunner(modelDirectory: modelDir)
         runners["attention"] = AttentionRunner(modelDirectory: modelDir)
+        runners["projection"] = ProjectionRunner(modelDirectory: modelDir)
 
         NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)
             .sink { [weak self] _ in
@@ -304,8 +311,9 @@ extension LLMEngine {
         histories: [[Float]],
         onComplete: @escaping (Result<[Float]?, LLMEngine.LLMError>) -> Void
     ) {
-        guard let runner = runners["attention"] else {
-            onComplete(.failure(.scriptError("Attention runner not found")))
+        guard let attentionRunner = runners["attention"],
+              let projectionRunner = runners["projection"] else {
+            onComplete(.failure(.scriptError("Attention or projection runner not found")))
             return
         }
         
@@ -322,16 +330,59 @@ extension LLMEngine {
                 return
             }
             
-            runner.sendData(jsonString, tokenStreamCallback: { _ in }, onComplete: { result in
+            // First, compute attention
+            attentionRunner.sendData(jsonString, loraPath: nil, contextEmbedding: nil, tokenStreamCallback: { _ in }, onComplete: { result in
                 switch result {
-                case .success(let output):
+                case .success(let attentionOutput):
                     do {
-                        struct AttentionResponse: Codable { let combined_embedding: [Float]? }
-                        guard let data = output.data(using: .utf8) else {
-                            throw LLMEngine.LLMError.scriptError("Failed to convert attention output to Data")
+                        let attentionData = try JSONDecoder().decode(AttentionResponse.self, from: Data(attentionOutput.utf8))
+                        // Perform weighted sum using weights and selected histories
+                        var combinedEmbedding: [Float] = Array(repeating: 0.0, count: histories.first?.count ?? 0)
+                        let totalWeight = attentionData.weights.reduce(0.0, +)
+                        
+                        if totalWeight > 0 && !attentionData.indices.isEmpty {
+                            for (index, weight) in attentionData.weights.enumerated() {
+                                if index < attentionData.indices.count {
+                                    let historyIndex = attentionData.indices[index]
+                                    if historyIndex < histories.count {
+                                        let history = histories[historyIndex]
+                                        for i in 0..<combinedEmbedding.count {
+                                            combinedEmbedding[i] += Float(weight) * history[i]
+                                        }
+                                    }
+                                }
+                            }
+                            // Normalize by total weight if needed (optional, depending on your use case)
+                            if totalWeight != 1.0 {
+                                for i in 0..<combinedEmbedding.count {
+                                    combinedEmbedding[i] /= Float(totalWeight)
+                                }
+                            }
+                        } else {
+                            combinedEmbedding = target // Fallback to target if no valid weights
                         }
-                        let response = try JSONDecoder().decode(AttentionResponse.self, from: data)
-                        onComplete(.success(response.combined_embedding))
+                        
+                        // Then, project the combined embedding
+                        let projectionInput: [String: Any] = ["context_embedding": combinedEmbedding]
+                        let projectionJsonData = try JSONSerialization.data(withJSONObject: projectionInput)
+                        guard let projectionJsonString = String(data: projectionJsonData, encoding: .utf8) else {
+                            onComplete(.failure(.promptEncodingError))
+                            return
+                        }
+                        
+                        projectionRunner.sendData(projectionJsonString, loraPath: nil, contextEmbedding: nil, tokenStreamCallback: { _ in }, onComplete: { result in
+                            switch result {
+                            case .success(let projectionOutput):
+                                do {
+                                    let projectionData = try JSONDecoder().decode(ProjectedEmbeddingResponse.self, from: Data(projectionOutput.utf8))
+                                    onComplete(.success(projectionData.embedding))
+                                } catch {
+                                    onComplete(.failure(.scriptError("Failed to parse projected embedding: \(error)")))
+                                }
+                            case .failure(let error):
+                                onComplete(.failure(error))
+                            }
+                        })
                     } catch {
                         onComplete(.failure(.scriptError("Failed to parse attention response: \(error)")))
                     }

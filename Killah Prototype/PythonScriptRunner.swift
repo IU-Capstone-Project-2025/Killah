@@ -428,3 +428,10 @@ class AttentionRunner: BaseScriptRunner {
         super.init(scriptName: "attention.py", modelDirectory: modelDirectory)
     }
 }
+
+class ProjectionRunner: BaseScriptRunner {
+    init(modelDirectory: String?) {
+        super.init(scriptName: "projector.py", modelDirectory: modelDirectory)
+    }
+}
+

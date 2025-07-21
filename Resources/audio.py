@@ -174,12 +174,12 @@ def initialize_processor():
     audio_processor = AudioProcessor(projector_file)
     return audio_processor.projector is not None and audio_processor.whisper_model is not None and audio_processor.whisper_processor is not None and audio_processor.whisper_transcriber is not None
 
-def process_audio_file(file_path, generateEmbeddings):
+def process_audio_file(file_path, generateEmbeddings=False):
     """Process the audio file and return embeddings or transcription."""
     if not audio_processor or not audio_processor.projector or not audio_processor.whisper_model or not audio_processor.whisper_processor or not audio_processor.whisper_transcriber:
         print("Audio processor not initialized", file=sys.stderr, flush=True)
         return None
-    result = audio_processor.process_audio(file_path, generateEmbeddings=generateEmbeddings)  # Set to False for transcription
+    result = audio_processor.process_audio(file_path, generateEmbeddings=False)  # Set to False for transcription
     if result is not None:
         print(json.dumps(result), flush=True)
         print("END", flush=True)
@@ -209,6 +209,7 @@ if __name__ == "__main__":
                     break
                 if "|||" in line:
                     path, generateEmbeddings = line.split("|||")
+                    print(generateEmbeddings, file=sys.stderr, flush=True)
                     if generateEmbeddings == "false":
                         flag = False
                     else:

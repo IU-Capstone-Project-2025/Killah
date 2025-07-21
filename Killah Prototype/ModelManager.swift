@@ -97,7 +97,8 @@ class ModelManager: NSObject, ObservableObject {
             ModelFile(
                 dirName: "checkpoints",
                 repoID: "poinka/checkpoints",
-                requiredFiles: ["latest_checkpoint_bs4_epoch_1_step_4300.pt"]
+                requiredFiles: ["latest_checkpoint_bs4_epoch_1_step_4300.pt",
+                               "projector_epoch0_step04200.pt"]
         ),
             ModelFile(
                 dirName: "lora",
@@ -109,7 +110,14 @@ class ModelManager: NSObject, ObservableObject {
                 repoID: "poinka/lora_for_gemma",
                 requiredFiles: ["rewriting_lora_f16.gguf"]
             
-        )
+        ),
+            ModelFile(
+                dirName: "encoder",
+                repoID: "sentence-transformers/paraphrase-multilingual-mpnet-base-v2",
+                requiredFiles: ["config.json",
+                                "model.safetensors",
+                                "tokenizer.json"]
+            )
         
         // Any other models like MLP projectors or LoRA adapters can be added here.
         // If they are single files, they don't need to be zipped.

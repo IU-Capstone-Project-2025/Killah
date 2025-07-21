@@ -3,7 +3,7 @@ import os
 import torch
 import select
 import json
-from main_llm import get_model_loader
+from sentence_transformers import SentenceTransformer
 
 # Add script directory to Python path
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -13,13 +13,12 @@ if script_dir not in sys.path:
 class TextEmbeddingGenerator:
     def __init__(self):
         self.device = "mps" if torch.backends.mps.is_available() and torch.backends.mps.is_built() else "cpu"
-        loader = get_model_loader()
-        if not loader:
-            print("Failed to get model loader.", file=sys.stderr, flush=True)
-            return None
+        base_model_path = os.environ.get('MODEL_DIR') or os.path.dirname(__file__)
+        encoder_path = os.path.join(base_model_path, "encoder")  # Adjust path to your model directory
         
-        self.model = loader.get_model()
+        self.model = SentenceTransformer(encoder_path)
         if self.model:
+            self.model.to(self.device)
             print("Embedding model initialized successfully.", file=sys.stderr, flush=True)
 
     def generate_embeddings(self, text):
@@ -28,8 +27,8 @@ class TextEmbeddingGenerator:
             print("Model not initialized", file=sys.stderr, flush=True)
             return None
         try:
-            embeddings = self.model.embed(text)
-            embeddings_tensor = torch.tensor(embeddings, dtype=torch.float32).to(self.device)
+            embeddings = self.model.encode(text, convert_to_tensor=True)
+            embeddings_tensor = embeddings.to(self.device)
             if embeddings_tensor.dim() > 1:
                 embeddings_tensor = embeddings_tensor.mean(dim=0)  # Average across tokens/sentences
             print(f"Generated embeddings shape: {embeddings_tensor.shape}", file=sys.stderr, flush=True)
