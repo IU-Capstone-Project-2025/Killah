@@ -5,6 +5,7 @@ import QuartzCore
 
 struct InlineSuggestingTextView: NSViewRepresentable {
     @EnvironmentObject var themeManager: ThemeManager
+    @EnvironmentObject var appStateManager: AppStateManager
     @Binding var text: String
     @ObservedObject var llmEngine: LLMEngine
     @ObservedObject var audioEngine: AudioEngine
@@ -109,6 +110,14 @@ struct InlineSuggestingTextView: NSViewRepresentable {
     
     private func setupCustomCaret(_ textView: CustomInlineNSTextView, context: Context) {
         let caretCoordinator = CaretUICoordinator(llmEngine: llmEngine, audioEngine: audioEngine)
+        // Set the textView reference
+        caretCoordinator.textView = textView
+        // Set the textInsertionHandler to append tokens to the text view
+        caretCoordinator.textInsertionHandler = { [weak textView] token in
+            DispatchQueue.main.async {
+                textView?.appendGhostTextToken(token)
+            }
+        }
         context.coordinator.caretCoordinator = caretCoordinator
         onCoordinatorChange?(caretCoordinator)
 
@@ -129,7 +138,7 @@ struct InlineSuggestingTextView: NSViewRepresentable {
 
         if textView.committedText() != text && !context.coordinator.isInternallyUpdatingTextBinding {
             textView.clearGhostText()
-            llmEngine.abortSuggestion(for: "autocomplete")
+            llmEngine.abortSuggestion(for: "generation")
             textView.string = text
             DispatchQueue.main.async {
                 context.coordinator.caretCoordinator?.updateCaretPosition(for: textView)
@@ -137,8 +146,9 @@ struct InlineSuggestingTextView: NSViewRepresentable {
             context.coordinator.currentCommittedText = text
         }
         
-        if textView.isEditable != true {
-            textView.isEditable = true
+        // Update editable state based on global state
+        if textView.isEditable != !appStateManager.isGenerating {
+            textView.isEditable = !appStateManager.isGenerating
         }
     }
 
@@ -430,14 +440,14 @@ class Coordinator: NSObject, NSTextViewDelegate {
                         return false
                     } else {
                         tv.clearGhostText()
-                        llmEngine.abortSuggestion(for: "autocomplete")
+                        llmEngine.abortSuggestion(for: "generation")
                         parent.debouncer.cancel()
                         return true
                     }
                 }
                 else if NSMaxRange(affectedCharRange) <= ghostRange.location {
                     tv.clearGhostText()
-                    llmEngine.abortSuggestion(for: "autocomplete")
+                    llmEngine.abortSuggestion(for: "generation")
                     parent.debouncer.cancel()
                     return true
                 }
@@ -477,13 +487,19 @@ class Coordinator: NSObject, NSTextViewDelegate {
             if currentPromptForLLM.isEmpty {
                 print("💤 requestTextCompletion: prompt is empty, skipping")
                 textView.clearGhostText()
-                llmEngine.abortSuggestion(for: "autocomplete")
+                llmEngine.abortSuggestion(for: "generation")
                 return
             }
             
             // Запускаем запрос только если движок реально работает
-            guard llmEngine.getRunnerState(for: "autocomplete") == .running else {
+            guard llmEngine.getRunnerState(for: "generation") == .running else {
                 print("💤 LLM engine not running, skip completion request")
+                return
+            }
+
+            // Do not trigger autocomplete if another generation is already in progress
+            guard !parent.appStateManager.isGenerating else {
+                print("🚫 Generation is already in progress from another source. Skipping autocomplete.")
                 return
             }
 
@@ -495,10 +511,14 @@ class Coordinator: NSObject, NSTextViewDelegate {
 
             // Помечаем начало генерации
             caretCoordinator?.isGenerating = true
+            parent.appStateManager.startGeneration(from: .autocomplete)
 
             llmEngine.generateSuggestion(
-                for: "autocomplete",
-                prompt: currentPromptForLLM) { [weak textView] token in
+                for: "generation",
+                prompt: currentPromptForLLM,
+                isFromCaret: false,
+                taskType: "autocomplete"
+            ) { [weak textView] token in
                 DispatchQueue.main.async {
                     textView?.appendGhostTextToken(token)
                 }
@@ -518,6 +538,7 @@ class Coordinator: NSObject, NSTextViewDelegate {
                     }
                     // Готово или прервано — сбрасываем флаг генерации
                     self?.caretCoordinator?.isGenerating = false
+                    self?.parent.appStateManager.stopGeneration()
                 }
             }
         }
@@ -605,7 +626,9 @@ class Coordinator: NSObject, NSTextViewDelegate {
         private func clearAllCompletions(for textView: CustomInlineNSTextView) {
             textView.clearGhostText()
             parent.debouncer.cancel()
+            llmEngine.abortSuggestion(for: "generation")
             caretCoordinator?.isGenerating = false
+            parent.appStateManager.stopGeneration()
         }
         
         func updateCaret() {
@@ -988,7 +1011,7 @@ extension InlineSuggestingTextView.Coordinator: LLMInteractionDelegate {
         isProcessingAcceptOrDismiss = true
         
         print("🚫 performSuggestionDismissal called")
-        llmEngine.abortSuggestion(for: "autocomplete")
+        llmEngine.abortSuggestion(for: "generation")
         clearAllCompletions(for: textView)
         parent.debouncer.cancel() // cancel any pending completion
         skipNextCompletion = true // prevent immediate re-fetch
@@ -1175,6 +1198,34 @@ class CustomInlineNSTextView: NSTextView {
         }
         super.keyDown(with: event)
         notifyDelegate()
+    }
+
+    override func doCommand(by selector: Selector) {
+        if selector == #selector(insertTab(_:)) {
+            if self.ghostText() != nil {
+                llmInteractionDelegate?.acceptSuggestion()
+            } else {
+                 if let coordinator = delegate as? InlineSuggestingTextView.Coordinator {
+                    coordinator.caretCoordinator?.triggerBounceRight = true
+                    // Force-generate suggestion for current context
+                    coordinator.parent.debouncer.debounce { [weak coordinator, weak self] in
+                        guard let coordinator = coordinator, let self = self else { return }
+                        coordinator.requestTextCompletion(for: self)
+                    }
+                }
+            }
+            return
+        }
+        
+        if selector == #selector(cancelOperation(_:)) {
+            if let coordinator = delegate as? InlineSuggestingTextView.Coordinator {
+                coordinator.caretCoordinator?.triggerBounceLeft = true
+            }
+            llmInteractionDelegate?.dismissSuggestion()
+            return
+        }
+        
+        super.doCommand(by: selector)
     }
     
     // Override deleteBackward to remove entire marker when cursor is anywhere within the marker prefix, not just at its end, and re-number decimal lists

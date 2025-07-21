@@ -1,6 +1,14 @@
 import SwiftUI
 import AppKit
 
+// Enum to identify the source of text generation
+enum GenerationSource {
+    case none
+    case autocomplete
+    case audio
+    case prompt
+}
+
 class AppStateManager: ObservableObject {
     static let shared = AppStateManager()
     
@@ -11,7 +19,28 @@ class AppStateManager: ObservableObject {
     @Published var isModelDownloading: Bool = false
     @Published var isPythonScriptsStarting: Bool = false
     
+    // State for text generation
+    @Published var currentGenerationSource: GenerationSource = .none
+    
+    // Computed property to check if generation is active
+    var isGenerating: Bool {
+        currentGenerationSource != .none
+    }
+    
     private init() {}
+    
+    // Methods to control generation state
+    func startGeneration(from source: GenerationSource) {
+        DispatchQueue.main.async {
+            self.currentGenerationSource = source
+        }
+    }
+    
+    func stopGeneration() {
+        DispatchQueue.main.async {
+            self.currentGenerationSource = .none
+        }
+    }
     
     func closeModelDownloadSheet() {
         isModelDownloading = false

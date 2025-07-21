@@ -7,6 +7,7 @@
 
 import SwiftUI
 import AppKit
+import SwiftData
 
 // DocumentManager removed: using SwiftUI DocumentGroup and FileDocument
 
@@ -48,6 +49,7 @@ struct ContentView: View {
     @EnvironmentObject var llmEngine: LLMEngine
     @EnvironmentObject var audioEngine: AudioEngine
     @EnvironmentObject var modelManager: ModelManager
+    @StateObject private var appStateManager = AppStateManager.shared
     @State private var debouncer = Debouncer(delay: 1.0)
     @State private var textFormattingDelegate: TextFormattingDelegate?
     
@@ -63,8 +65,6 @@ struct ContentView: View {
     @State private var isCenterAlignActive = false
     @State private var isRightAlignActive  = false
 
-    @EnvironmentObject var appState: AppStateManager
-
     var body: some View {
         ZStack {
             // Main editor UI
@@ -73,9 +73,9 @@ struct ContentView: View {
             VStack {
                 Spacer()
                 LoadingOverlayView()
-                    .opacity(appState.isPythonScriptsStarting ? 1 : 0)
-                    .offset(y: appState.isPythonScriptsStarting ? 0 : 120)
-                    .animation(.easeInOut(duration: 0.35), value: appState.isPythonScriptsStarting)
+                    .opacity(appStateManager.isPythonScriptsStarting ? 1 : 0)
+                    .offset(y: appStateManager.isPythonScriptsStarting ? 0 : 120)
+                    .animation(.easeInOut(duration: 0.35), value: appStateManager.isPythonScriptsStarting)
                     .frame(maxWidth: .infinity)
                     .padding(.bottom, 20)
             }
@@ -84,7 +84,7 @@ struct ContentView: View {
             updateToolbarStates()
         }
         .sheet(isPresented: Binding(
-            get: { appState.isModelDownloading },
+            get: { appStateManager.isModelDownloading },
             set: { _ in }
         )) {
             ModelDownloadView(
@@ -93,7 +93,7 @@ struct ContentView: View {
                 isDownloading: modelManager.status.isDownloading,
                 downloadProgress: modelManager.status.progress
             )
-            .environmentObject(appState)
+            .environmentObject(appStateManager)
         }
     }
     
@@ -119,6 +119,7 @@ struct ContentView: View {
                 },
                 viewUpdater: $viewUpdater
             )
+            .environmentObject(appStateManager)
 
             // Floating toolbar with system white background
             FloatingToolbar(
@@ -224,18 +225,42 @@ struct CaretOverlaysView: View {
 }
 
 struct ContentView_Previews: PreviewProvider {
-    static var previews: some View {
-        let modelManager = ModelManager()
-        let llmEngine = LLMEngine(modelManager: modelManager)
-        let audioEngine = AudioEngine(llmEngine: llmEngine)
+    // Создаём зависимости для предварительного просмотра
+        private static var previewDependencies: (modelContainer: ModelContainer, modelManager: ModelManager, llmEngine: LLMEngine, audioEngine: AudioEngine) {
+            // Определяем схему (замените на актуальные модели)
+            let schema = Schema([
+                Embedding.self // Указываем модель Embedding, так как она используется в LLMEngine
+                // Если есть другие модели, например DocumentItem, добавьте их сюда
+            ])
+            let config = ModelConfiguration(isStoredInMemoryOnly: false)
+            let modelContainer: ModelContainer
+            do {
+                modelContainer = try ModelContainer(for: schema, configurations: config)
+                print("✅ ModelContainer initialized with storage: \(config.url.path) from ContentView")
+
+            } catch {
+                fatalError("Не удалось создать ModelContainer для предварительного просмотра: \(error)")
+            }
+
+            let modelManager = ModelManager()
+            let llmEngine = LLMEngine(modelManager: modelManager, modelContainer: modelContainer)
+            let audioEngine = AudioEngine(llmEngine: llmEngine)
+            
+            return (modelContainer, modelManager, llmEngine, audioEngine)
+        }
         
-        ContentView(
-            document: .constant(TextDocument())
-        )
-        .environmentObject(llmEngine)
-        .environmentObject(audioEngine)
-        .environmentObject(modelManager)
-    }
+        static var previews: some View {
+            let dependencies = previewDependencies
+            
+            ContentView(
+                document: .constant(TextDocument())
+            )
+            .environmentObject(dependencies.llmEngine)
+            .environmentObject(dependencies.audioEngine)
+            .environmentObject(dependencies.modelManager)
+            .environmentObject(AppStateManager.shared)
+            .environment(\.modelContext, dependencies.modelContainer.mainContext)
+        }
 }
 
 

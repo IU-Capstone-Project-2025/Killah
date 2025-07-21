@@ -248,9 +248,7 @@ source "$VENV_DST/bin/activate"
 echo "📦 Installing requirements from: $PROJECT_DIR/Resources/requirements.txt"
 pip install -r "$PROJECT_DIR/Resources/requirements.txt"
 echo "⬆️ Upgrading pip..."
-pip install --upgrade pip
-echo "📦 Installing requirements with upgrade strategy..."
-pip install --upgrade --upgrade-strategy eager -r "$PROJECT_DIR/Resources/requirements.txt"
+pip install --trusted-host pypi.org --trusted-host pypi.python.org --trusted-host files.pythonhosted.org --upgrade pip
 echo "🔧 Deactivating virtual environment..."
 deactivate
 

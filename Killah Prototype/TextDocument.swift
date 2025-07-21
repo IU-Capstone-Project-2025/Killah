@@ -2,7 +2,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 import AppKit
 import Foundation
-
+import SwiftData
 
 struct TextDocument: FileDocument {
     static var readableContentTypes: [UTType] { [.plainText, .rtf] }
@@ -74,21 +74,50 @@ struct DocumentItem: Identifiable {
         return formatter.string(from: date)
     }
     
-    static func loadFromDirectory() -> [DocumentItem] {
+    static func loadFromDirectory(context: ModelContext) -> [DocumentItem] {
         let fileManager = FileManager.default
-        
-        // Используем системную папку Documents пользователя
-        let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-        let killahDocumentsURL = documentsURL.appendingPathComponent("Killah")
-        
-        let folderExists = fileManager.fileExists(atPath: killahDocumentsURL.path)
-        
-        if !folderExists {
-            return []
+        var targetURL: URL?
+
+        if let bookmarkData = UserDefaults.standard.data(forKey: "DefaultDocumentsFolderBookmark") {
+            do {
+                var isStale = false
+                targetURL = try URL(resolvingBookmarkData: bookmarkData, options: .withSecurityScope, relativeTo: nil, bookmarkDataIsStale: &isStale)
+                if isStale {
+                    // Stale bookmark, need to re-authorize
+                    targetURL = nil
+                }
+            } catch {
+                print("Error resolving bookmark: \(error)")
+                targetURL = nil
+            }
         }
-        
+
+        if targetURL == nil {
+            let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+            targetURL = documentsURL.appendingPathComponent("Killah")
+        }
+
+        guard let url = targetURL else { return [] }
+
+        let shouldStopAccessing = url.startAccessingSecurityScopedResource()
+        defer {
+            if shouldStopAccessing {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        if !fileManager.fileExists(atPath: url.path) {
+            do {
+                try fileManager.createDirectory(at: url, withIntermediateDirectories: true, attributes: nil)
+                print("✅ Created directory at \(url.path)")
+            } catch {
+                print("🫩 Failed to create directory at \(url.path): \(error.localizedDescription)")
+                return []
+            }
+        }
+
         do {
-            let fileURLs = try fileManager.contentsOfDirectory(at: killahDocumentsURL, includingPropertiesForKeys: [.creationDateKey], options: [])
+            let fileURLs = try fileManager.contentsOfDirectory(at: url, includingPropertiesForKeys: [.creationDateKey], options: [])
             
             let documents = fileURLs
                 .filter { $0.pathExtension == "txt" || $0.pathExtension == "rtf" }
@@ -104,12 +133,25 @@ struct DocumentItem: Identifiable {
                         .joined(separator: " ")
                     let date = (try? fileManager.attributesOfItem(atPath: url.path)[.modificationDate] as? Date) ?? Date()
                     
+                    // Проверяем, есть ли эмбеддинг в базе данных для этого URL
+                    let isPersonalized: Bool
+                    do {
+                        let descriptor = FetchDescriptor<Embedding>(
+                            predicate: #Predicate { $0.documentURL == url && $0.isPersonalized }
+                        )
+                        let embeddings = try context.fetch(descriptor)
+                        isPersonalized = !embeddings.isEmpty
+                    } catch {
+                        print("🫩 Ошибка при проверке персонализации для \(url.lastPathComponent): \(error)")
+                        isPersonalized = false
+                    }
+                    
                     return DocumentItem(
                         url: url,
                         filename: url.lastPathComponent,
                         contentPreview: preview,
                         date: date,
-                        isPersonalized: Bool.random() // Временно случайное значение для демонстрации
+                        isPersonalized: isPersonalized // Временно случайное значение для демонстрации
                     )
                 }
             

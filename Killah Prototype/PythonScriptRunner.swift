@@ -137,8 +137,10 @@ class BaseScriptRunner: NSObject, PythonScriptRunner {
         accumulatedOutput = ""
         isAbortedManually = false
 
-        print("➡️ Sending data to \(scriptName): \"\(data)\"")
-        guard let inputData = (data + "\n").data(using: .utf8) else {
+        let payload = data // Data is now a pre-formatted JSON string
+
+        print("➡️ Sending data to \(scriptName): \"\(payload.prefix(200))...\"")
+        guard let inputData = (payload + "\n").data(using: .utf8) else {
             print("❌ Error encoding data to UTF-8.")
             currentCompletionCallback?(.failure(.promptEncodingError))
             currentTokenCallback = nil
@@ -168,7 +170,7 @@ class BaseScriptRunner: NSObject, PythonScriptRunner {
 
         if notifyPython, let runningTask = task, runningTask.isRunning, let stdin = stdinPipe {
             print("➡️ Sending abort signal to \(scriptName) stdin")
-            guard let data = "\n".data(using: .utf8) else {
+            guard let data = "CMD:ABORT\n".data(using: .utf8) else {
                 print("❌ Error encoding abort signal")
                 currentCompletionCallback?(.failure(.promptEncodingError))
                 return
@@ -257,12 +259,12 @@ class BaseScriptRunner: NSObject, PythonScriptRunner {
             guard let self = self else { return }
             let data = pipe.availableData
             if data.isEmpty {
-                print("🐍 \(self.scriptName) STDERR: EOF reached or pipe closed.")
+                print("🐍 [RUNNER] \(self.scriptName) STDERR: EOF reached or pipe closed.")
                 if !(self.task?.isRunning ?? false) { return }
             } else {
                 let rawOutput = String(data: data, encoding: .utf8) ?? "<failed to decode stderr as utf8>"
                 DispatchQueue.main.async {
-                    print("🐍 \(self.scriptName) STDERR: \"\(rawOutput.trimmingCharacters(in: .whitespacesAndNewlines))\"")
+                    print("🐍 [RUNNER] \(self.scriptName) STDERR: \"\(rawOutput.trimmingCharacters(in: .whitespacesAndNewlines))\"")
                 }
             }
             if self.task?.isRunning ?? false {
@@ -284,9 +286,12 @@ class BaseScriptRunner: NSObject, PythonScriptRunner {
             let data = pipe.availableData
             if !data.isEmpty {
                 if let rawOutput = String(data: data, encoding: .utf8) {
-                    outputBuffer += rawOutput
-                    var lines = outputBuffer.components(separatedBy: .newlines)
-                    outputBuffer = lines.removeLast()
+                    DispatchQueue.main.async {
+                        print("🐍 [RUNNER] \(self.scriptName) STDOUT: \"\(rawOutput.trimmingCharacters(in: .whitespacesAndNewlines))\"")
+                    }
+                    self.outputBuffer += rawOutput
+                    var lines = self.outputBuffer.components(separatedBy: .newlines)
+                    self.outputBuffer = lines.removeLast()
 
                     for line in lines where !line.isEmpty {
                         DispatchQueue.main.async {
@@ -297,7 +302,9 @@ class BaseScriptRunner: NSObject, PythonScriptRunner {
                             } else if self.state == .running && !self.isAbortedManually {
                                 if line == "STREAM" {
                                     self.accumulatedOutput = ""
+                                    print("[RUNNER] Stream started.")
                                 } else if line == "END" {
+                                    print("[RUNNER] END received. Calling onComplete with full string: \(self.accumulatedOutput.prefix(200))...")
                                     if let callback = self.currentCompletionCallback {
                                         callback(.success(self.accumulatedOutput))
                                     }
@@ -306,9 +313,10 @@ class BaseScriptRunner: NSObject, PythonScriptRunner {
                                     self.accumulatedOutput = ""
                                     self.isAbortedManually = false
                                 } else {
+                                    print("[RUNNER] Accumulating: \(line)")
                                     if let callback = self.currentTokenCallback {
                                         callback(line)
-                                        self.accumulatedOutput += line + "\n"
+                                        self.accumulatedOutput += line
                                     }
                                 }
                             }
@@ -403,21 +411,27 @@ class AudioScriptRunner: BaseScriptRunner {
     }
 }
 
-class AutocompleteScriptRunner: BaseScriptRunner {
+class GenerationScriptRunner: BaseScriptRunner {
     init(modelDirectory: String?) {
-        super.init(scriptName: "autocomplete.py", modelDirectory: modelDirectory)
-    }
-}
-
-class CaretScriptRunner: BaseScriptRunner {
-    init(modelDirectory: String?) {
-        super.init(scriptName: "embedding_processor.py", modelDirectory: modelDirectory)
+        super.init(scriptName: "generation.py", modelDirectory: modelDirectory)
     }
 }
 
 class EmbeddingsRunner: BaseScriptRunner {
     init(modelDirectory: String?) {
         super.init(scriptName: "text_to_embeddings.py", modelDirectory: modelDirectory)
+    }
+}
+
+class AttentionRunner: BaseScriptRunner {
+    init(modelDirectory: String?) {
+        super.init(scriptName: "attention.py", modelDirectory: modelDirectory)
+    }
+}
+
+class ProjectionRunner: BaseScriptRunner {
+    init(modelDirectory: String?) {
+        super.init(scriptName: "projector.py", modelDirectory: modelDirectory)
     }
 }
 

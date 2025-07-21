@@ -15,23 +15,23 @@ class AudioEngine: NSObject, ObservableObject, SFSpeechRecognizerDelegate {
     private var audioEngine: AVAudioEngine!
     private var audioFile: AVAudioFile?
     private var audioFilePath: URL?
-
+    
     // Speech Recognition properties
     private let speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US")) // Or your preferred locale
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
-
+    
     // Timer for periodic transcription UI updates
     private var fullTranscription: String = ""
     private var transcriptionUpdateTimer: Timer?
-
+    
     // Use AVCaptureSession to trigger macOS microphone indicator
     private var captureSession: AVCaptureSession?
-        private var isStopping = false
-
+    private var isStopping = false
+    
     private let llmEngine: LLMEngine // Inject LLMEngine
     private var stateCancellable: AnyCancellable?
-
+    
     var onTranscriptionComplete: ((String) -> Void)?
     
     init(llmEngine: LLMEngine) {
@@ -39,7 +39,7 @@ class AudioEngine: NSObject, ObservableObject, SFSpeechRecognizerDelegate {
         super.init()
         audioEngine = AVAudioEngine()
         speechRecognizer?.delegate = self
-
+        
         SFSpeechRecognizer.requestAuthorization { authStatus in
             OperationQueue.main.addOperation {
                 switch authStatus {
@@ -56,7 +56,7 @@ class AudioEngine: NSObject, ObservableObject, SFSpeechRecognizerDelegate {
         setupCaptureSession()
         
         // Observe LLMEngine state
-        stateCancellable = llmEngine.$engineState.sink {state in
+        stateCancellable = llmEngine.$engineState.sink { state in
             if case .error(let message) = state {
                 DispatchQueue.main.async {
                     print("AI Engine Error: \(message)")
@@ -64,8 +64,7 @@ class AudioEngine: NSObject, ObservableObject, SFSpeechRecognizerDelegate {
             }
         }
     }
-
-    /// Configure AVCaptureSession with audio input to show system mic indicator
+    
     private func setupCaptureSession() {
         let session = AVCaptureSession()
         session.beginConfiguration()
@@ -82,18 +81,18 @@ class AudioEngine: NSObject, ObservableObject, SFSpeechRecognizerDelegate {
         session.commitConfiguration()
         captureSession = session
     }
-
-    func startRecording() {
+    
+    func startRecording(generateEmbeddings: Bool = false) {
         guard !isRecording else { return }
-        print("Starting recording process...")
+        print("Starting recording process with generateEmbeddings=\(generateEmbeddings)...")
         // Abort any previous audio suggestion and start the Python audio engine
         llmEngine.abortSuggestion(for: "audio", notifyPython: true)
         llmEngine.startEngine(for: "audio")
-
+        
         // Force microphone permission request
         requestMicrophonePermission { [weak self] granted in
             if granted {
-                self?.performRecording()
+                self?.performRecording(generateEmbeddings: generateEmbeddings)
             } else {
                 print("Microphone permission denied")
             }
@@ -118,7 +117,7 @@ class AudioEngine: NSObject, ObservableObject, SFSpeechRecognizerDelegate {
         }
     }
     
-    private func performRecording() {
+    private func performRecording(generateEmbeddings: Bool) {
         // Start AVCaptureSession to trigger system mic indicator
         captureSession?.startRunning()
         
@@ -139,15 +138,15 @@ class AudioEngine: NSObject, ObservableObject, SFSpeechRecognizerDelegate {
         let audioFileName = "recording_\(Date().timeIntervalSince1970).wav"
         audioFilePath = documentsPath.appendingPathComponent(audioFileName)
         print("Audio file path set to: \(audioFilePath!.absoluteString)")
-        savedAudioFilePath = audioFilePath // Сохраняем копию
+        savedAudioFilePath = audioFilePath // Save a copy
         print("Audio file path set to: \(audioFilePath!.absoluteString)")
-        // Creation AVAudioFile for recording
+        // Create AVAudioFile for recording
         do {
             audioFile = try AVAudioFile(forWriting: audioFilePath!, settings: recordingFormat.settings)
             print("✅ AVAudioFile created successfully at: \(audioFilePath!.absoluteString)")
         } catch {
             print("❌ Failed to create audio file: \(error)")
-            audioFilePath = nil // Явно сбрасываем путь при ошибке
+            audioFilePath = nil // Explicitly reset path on error
             return
         }
         
@@ -160,7 +159,7 @@ class AudioEngine: NSObject, ObservableObject, SFSpeechRecognizerDelegate {
         if #available(macOS 13.0, *) {
             recognitionRequest.requiresOnDeviceRecognition = true
         }
-
+        
         recognitionTask = speechRecognizer?.recognitionTask(with: recognitionRequest) { [weak self] result, error in
             guard let self = self else { return }
             
@@ -173,23 +172,23 @@ class AudioEngine: NSObject, ObservableObject, SFSpeechRecognizerDelegate {
             }
             
             var isFinal = false
-
+            
             if let result = result {
                 // Update the full transcription string in the background
                 self.fullTranscription = result.bestTranscription.formattedString
                 isFinal = result.isFinal
             }
-
+            
             if isFinal {
                 self.updateDisplayedTranscription() // Perform one final update
                 self.stopRecording()
             }
         }
-
+        
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { [weak self] (buffer, when) in
             guard let self = self, !self.isPaused else { return }
             
-            // Writing buffer to the file
+            // Write buffer to the file
             do {
                 try self.audioFile?.write(from: buffer)
             } catch {
@@ -199,7 +198,7 @@ class AudioEngine: NSObject, ObservableObject, SFSpeechRecognizerDelegate {
             self.recognitionRequest?.append(buffer)
             self.updateAudioLevel(buffer: buffer)
         }
-
+        
         do {
             try audioEngine.start()
             DispatchQueue.main.async {
@@ -207,7 +206,7 @@ class AudioEngine: NSObject, ObservableObject, SFSpeechRecognizerDelegate {
                 self.isPaused = false
                 self.transcribedText = ""
                 self.fullTranscription = "" // Reset on start
-
+                
                 // Invalidate any existing timer and start a new one
                 self.transcriptionUpdateTimer?.invalidate()
                 self.transcriptionUpdateTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { [weak self] _ in
@@ -223,41 +222,42 @@ class AudioEngine: NSObject, ObservableObject, SFSpeechRecognizerDelegate {
             self.stopRecording()
         }
     }
-
+    
     func stopRecording() {
         guard isRecording, !isStopping else {
-            print("⚠️ stopRecording called but isRecording is false")
+            if !isRecording {
+                print("⚠️ stopRecording called but isRecording is false")
+            }
             return
         }
-
+        
         print("Stopping recording...")
-
+        
         isStopping = true
-
+        
         transcriptionUpdateTimer?.invalidate()
         transcriptionUpdateTimer = nil
-
+        
         // Stop AVCaptureSession to hide system mic indicator
         captureSession?.stopRunning()
         
         audioEngine.stop()
         audioEngine.inputNode.removeTap(onBus: 0)
-
+        
         recognitionRequest?.endAudio()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-            self.recognitionTask?.cancel()
-            self.recognitionRequest = nil
-            self.recognitionTask = nil
-        }
+        recognitionTask?.cancel()
         
         audioFile = nil
-
+        
         DispatchQueue.main.async {
             self.isRecording = false
             self.isPaused = false
             self.isStopping = false
+            
+            self.recognitionRequest = nil
+            self.recognitionTask = nil
         }
-        audioFilePath = nil
+        
         if let path = self.savedAudioFilePath ?? self.audioFilePath {
             print("Audio file path: \(path.absoluteString)")
             if FileManager.default.fileExists(atPath: path.path) {
@@ -266,9 +266,9 @@ class AudioEngine: NSObject, ObservableObject, SFSpeechRecognizerDelegate {
                     let attributes = try FileManager.default.attributesOfItem(atPath: path.path)
                     let fileSize = attributes[.size] as? Int64 ?? 0
                     print("File size: \(fileSize) bytes")
-                    if fileSize > 44 { // WAV заголовок ~44 байта
-                        self.audioFilePath = path // Восстанавливаем путь
-                        self.processAudioFileWithPython()
+                    if fileSize > 44 { // WAV header ~44 bytes
+                        self.audioFilePath = path // Restore path
+                        self.processAudioFileWithPython(generateEmbeddings: false) // SET FLAG FOR GENERATING EMBEDDINGS HERE
                     } else {
                         print("⚠️ Audio file is too small (likely empty): \(fileSize) bytes")
                     }
@@ -284,11 +284,11 @@ class AudioEngine: NSObject, ObservableObject, SFSpeechRecognizerDelegate {
         self.audioFilePath = nil
         self.savedAudioFilePath = nil
     }
-
+    
     func togglePause() {
         guard isRecording else { return }
         isPaused.toggle()
-
+        
         if isPaused {
             audioEngine.pause()
         } else {
@@ -303,15 +303,15 @@ class AudioEngine: NSObject, ObservableObject, SFSpeechRecognizerDelegate {
             self.isPaused = self.isPaused
         }
     }
-
+    
     private func updateAudioLevel(buffer: AVAudioPCMBuffer) {
-        guard let channelData = buffer.floatChannelData else { 
+        guard let channelData = buffer.floatChannelData else {
             print("No channel data available")
-            return 
+            return
         }
         let channelDataValue = channelData.pointee
         let channelDataValueArray = UnsafeBufferPointer(start: channelDataValue, count: Int(buffer.frameLength))
-
+        
         let rms = sqrt(channelDataValueArray.map { $0 * $0 }.reduce(0, +) / Float(buffer.frameLength))
         let avgPower = 20 * log10(rms)
         
@@ -320,7 +320,7 @@ class AudioEngine: NSObject, ObservableObject, SFSpeechRecognizerDelegate {
         let maxDb: Float = 0.0
         var normalizedLevel = (avgPower - minDb) / (maxDb - minDb)
         normalizedLevel = max(0.0, min(1.0, normalizedLevel))
-
+        
         DispatchQueue.main.async {
             // Apply a smoothing factor to prevent jerky movements
             self.audioLevel = self.audioLevel * 0.8 + normalizedLevel * 0.2
@@ -338,7 +338,6 @@ class AudioEngine: NSObject, ObservableObject, SFSpeechRecognizerDelegate {
         }
     }
     
-    // This delegate method is called when the availability of the speech recognizer changes
     func speechRecognizer(_ speechRecognizer: SFSpeechRecognizer, availabilityDidChange available: Bool) {
         if available {
             print("Speech recognizer is available")
@@ -348,44 +347,38 @@ class AudioEngine: NSObject, ObservableObject, SFSpeechRecognizerDelegate {
         }
     }
     
-    private func processAudioFileWithPython() {
+    private func processAudioFileWithPython(generateEmbeddings: Bool) {
         guard let audioFilePath = audioFilePath else {
             print("No audio file available to process")
             return
         }
-
-        // Указываем, что начинается обработка аудио
+        
         DispatchQueue.main.async {
             self.isProcessingAudio = true
         }
-
-        // Вся обработка выносится в фоновый поток, чтобы не блокировать UI
+        
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
-
+            
             let checkInterval: TimeInterval = 0.1
             let maxAttempts = 50
             var attempts = 0
-
-            // В цикле ждем, пока Python-скрипт не будет готов к работе.
-            // Это ожидание происходит в фоновом потоке.
+            
             while self.llmEngine.getRunnerState(for: "audio") != .running && attempts < maxAttempts {
-                Thread.sleep(forTimeInterval: checkInterval) // Пауза в фоновом потоке
+                Thread.sleep(forTimeInterval: checkInterval)
                 attempts += 1
             }
-
-            // Проверяем, запустился ли движок после ожидания
+            
             if self.llmEngine.getRunnerState(for: "audio") == .running {
-                // Если да, то вызываем ресурсоемкую функцию `generateSuggestion`.
-                // Она также будет выполняться в этом фоновом потоке.
+                // Pass generateEmbeddings parameter to Python script
+                let prompt = "\(audioFilePath.path)|||\(generateEmbeddings)"
                 self.llmEngine.generateSuggestion(
                     for: "audio",
-                    prompt: audioFilePath.path,
+                    prompt: prompt,
+                    isFromCaret: false,
                     tokenStreamCallback: { token in
-                        // Коллбэки могут приходить в любом потоке,
-                        // поэтому для любых обновлений UI лучше явно переключаться в главный поток.
                         DispatchQueue.main.async {
-                             print("Audio token received: \(token)")
+                            print("Audio token received: \(token)")
                         }
                     },
                     onComplete: { [weak self] result in
@@ -393,8 +386,17 @@ class AudioEngine: NSObject, ObservableObject, SFSpeechRecognizerDelegate {
                         DispatchQueue.main.async {
                             self.isProcessingAudio = false
                             switch result {
-                            case .success(let embeddingsPath):
-                                self.processEmbeddings(embeddingsPath)
+                            case .success(let resultJson):
+                                self.processAudioResult(resultJson)
+                                do {
+                                    if FileManager.default.fileExists(atPath: audioFilePath.path) {
+                                        try FileManager.default.removeItem(at: audioFilePath)
+                                        print("✅ Deleted audio file at: \(audioFilePath.absoluteString)")
+                                    }
+                                } catch {
+                                    print("❌ Failed to delete audio file at \(audioFilePath.absoluteString): \(error)")
+                                }
+                                
                             case .failure(let error):
                                 print("Failed to process audio: \(error)")
                             }
@@ -402,9 +404,7 @@ class AudioEngine: NSObject, ObservableObject, SFSpeechRecognizerDelegate {
                     }
                 )
             } else {
-                // Если движок так и не запустился, сообщаем об этом в главный поток.
                 DispatchQueue.main.async {
-                    // Сбрасываем состояние обработки аудио
                     self.isProcessingAudio = false
                     print("❌ audio.py failed to reach running state after %.1f seconds", Double(maxAttempts) * checkInterval)
                     print("Audio processing engine not ready")
@@ -412,34 +412,44 @@ class AudioEngine: NSObject, ObservableObject, SFSpeechRecognizerDelegate {
             }
         }
     }
-    private func processEmbeddings(_ embeddingsPath: String) {
-        llmEngine.startEngine(for: "caret")
-        llmEngine.generateSuggestion(
-            for: "caret",
-            prompt: embeddingsPath,
-            tokenStreamCallback: { token in
-                // Коллбэки могут приходить в любом потоке,
-                // поэтому для любых обновлений UI лучше явно переключаться в главный поток.
-                DispatchQueue.main.async {
-                     print("Processed audio embedding token received: \(token)")
-                }
-            },
-            onComplete: { [weak self] result in
-                guard let self = self else { return }
-                DispatchQueue.main.async {
-                    switch result {
-                    case .success(let text):
-                        self.onTranscriptionComplete?(text)
-                        do {
-                            try FileManager.default.removeItem(atPath: embeddingsPath)
-                        } catch {
-                            print("Failed to delete temp file: \(error)")
-                        }
-                    case .failure(let error):
-                        print("Error processing embeddings: \(error)")
-                    }
-                }
+    
+    private func processAudioResult(_ resultJson: String) {
+        do {
+            guard let data = resultJson.data(using: .utf8),
+                  let json = try JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
+                  let type = json["type"] as? String else {
+                print("Invalid JSON format: \(resultJson)")
+                return
             }
-        )
+
+            if type == "transcription" {
+                // Handle transcription: send plain text to autocomplete
+                guard let text = json["text"] as? String else {
+                    print("Invalid transcription JSON: missing 'text' field")
+                    return
+                }
+                print("Received transcription: \(text)")
+                self.onTranscriptionComplete?(text)
+            } else {
+                // Handle audio embeddings: create JSON with embeddings
+                guard let embeddings = json["embeddings"] as? [[Double]] else {
+                    print("Invalid embeddings JSON: missing or invalid 'embeddings' field")
+                    return
+                }
+                let audioEmbeddingsJson: [String: Any] = [
+                    "type": "projected_audio_embeds",
+                    "embeddings": embeddings,
+                ]
+                guard let jsonData = try? JSONSerialization.data(withJSONObject: audioEmbeddingsJson),
+                      let jsonString = String(data: jsonData, encoding: .utf8) else {
+                    print("❌ Failed to serialize embeddings JSON")
+                    return
+                }
+                print("Received embeddings: \(jsonString)")
+                self.onTranscriptionComplete?(jsonString)
+            }
+        } catch {
+            print("Error parsing JSON: \(error)")
+        }
     }
 }

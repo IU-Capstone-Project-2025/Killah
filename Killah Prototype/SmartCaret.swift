@@ -204,7 +204,7 @@ struct CaretRecordButton: View {
     }
     
     private var shouldShowRecordButton: Bool {
-        return coordinator.isExpanded && !coordinator.isRecording
+        return coordinator.isExpanded && !coordinator.isRecording && !coordinator.isGenerating
     }
 }
 
@@ -242,7 +242,7 @@ struct CaretPauseButton: View {
         .offset(y: coordinator.isRecording ? -15 : -20)
         .opacity(coordinator.isRecording ? 1.0 : 0.0)
         .animation(caretUIAnimation, value: coordinator.isRecording)
-        .allowsHitTesting(coordinator.isRecording)
+        .allowsHitTesting(coordinator.isRecording && !coordinator.isGenerating)
     }
 }
 
@@ -280,7 +280,7 @@ struct CaretStopButton: View {
         .offset(y: coordinator.isRecording ? 0 : -20)
         .opacity(coordinator.isRecording ? 1.0 : 0.0)
         .animation(caretUIAnimation, value: coordinator.isRecording)
-        .allowsHitTesting(coordinator.isRecording)
+        .allowsHitTesting(coordinator.isRecording && !coordinator.isGenerating)
     }
 }
 
@@ -296,7 +296,8 @@ struct CaretPromptField: View {
     var body: some View {
         TextField("Ask lil Pushkin", text: $coordinator.promptText, axis: .vertical)
             .onSubmit {
-                coordinator.generateFromTextPrompt()
+                let selectedRange = coordinator.textView?.selectedRange
+                coordinator.generateFromTextPrompt(selectedRange: selectedRange)
             }
             .font(.system(size: coordinator.promptFieldFontSize))
             .textFieldStyle(PlainTextFieldStyle())
@@ -341,7 +342,7 @@ struct CaretPromptField: View {
             .animation(caretUIAnimation, value: coordinator.isRecording)
             .animation(caretUIAnimation, value: coordinator.promptText)
             .animation(caretUIAnimation, value: promptFieldWidth)
-            .allowsHitTesting(shouldShowPromptField && coordinator.isExpanded && !coordinator.isRecording)
+            .allowsHitTesting(shouldShowPromptField && coordinator.isExpanded && !coordinator.isRecording && !coordinator.isGenerating)
             .background(
                 GeometryReader { geo in
                     Color.clear
@@ -358,7 +359,7 @@ struct CaretPromptField: View {
     
     // Local computed properties
     private var shouldShowPromptField: Bool {
-        return coordinator.isExpanded && !coordinator.isRecording
+        return coordinator.isExpanded && !coordinator.isRecording && !coordinator.isGenerating
     }
     
     private var promptFieldWidth: CGFloat {
@@ -420,7 +421,7 @@ struct AudioWaveformView: View {
             )
             .opacity(opacity)
             .onReceive(timer) { _ in
-                guard coordinator.isRecording && !coordinator.isPaused else { return }
+                guard coordinator.isRecording && !coordinator.isPaused && !coordinator.isGenerating else { return }
                 audioSamples.removeFirst()
                 let newSample = coordinator.audioLevel // * Float.random(in: 0.8...1.2)
                 audioSamples.append(newSample)
@@ -434,7 +435,7 @@ struct AudioWaveformView: View {
                 }
             }
             .onChange(of: coordinator.transcribedText) { _, _ in
-                guard coordinator.isRecording else { return }
+                guard coordinator.isRecording && !coordinator.isGenerating else { return }
                 inactivityTimer?.invalidate()
                 withAnimation(.spring(response: 0.4, dampingFraction: 0.8, blendDuration: 0.2)) {
                     opacity = 1.0
@@ -447,7 +448,7 @@ struct AudioWaveformView: View {
             }
             .onChange(of: coordinator.isRecording) { _, isRecording in
                 inactivityTimer?.invalidate()
-                if !isRecording {
+                if !isRecording || coordinator.isGenerating {
                     withAnimation(.easeOut(duration: 0.3)) {
                         opacity = 0
                     }
@@ -457,7 +458,7 @@ struct AudioWaveformView: View {
                     }
                 }
             }
-            .scaleEffect(x: coordinator.isRecording ? 1.0 : 0.1, anchor: .leading)
+            .scaleEffect(x: coordinator.isRecording && !coordinator.isGenerating ? 1.0 : 0.1, anchor: .leading)
             .offset(x: coordinator.isRecording ? 0 : -20)
             .animation(
                 caretUIAnimation,
@@ -527,7 +528,7 @@ struct TranscriptionView: View {
                 endPoint: .trailing
             )
         )
-        .scaleEffect(x: coordinator.isRecording ? 1.0 : 0.1, anchor: .trailing)
+        .scaleEffect(x: coordinator.isRecording && !coordinator.isGenerating ? 1.0 : 0.1, anchor: .trailing)
         .offset(x: coordinator.isRecording ? 0 : 20)
         .opacity(opacity)
         .onAppear {
@@ -538,7 +539,7 @@ struct TranscriptionView: View {
             }
         }
         .onChange(of: coordinator.transcribedText) { oldValue, newValue in
-            guard coordinator.isRecording else { return }
+            guard coordinator.isRecording && !coordinator.isGenerating else { return }
             let words = newValue.split(separator: " ").map { String($0) }
             let lastThree = Array(words.suffix(3))
             if lastThree != displayedWords.map({ $0.text }) {
@@ -556,7 +557,7 @@ struct TranscriptionView: View {
         }
         .onChange(of: coordinator.isRecording) { _, isRecording in
             inactivityTimer?.invalidate()
-            if !isRecording {
+            if !isRecording || coordinator.isGenerating {
                 withAnimation(.easeOut(duration: 0.3)) {
                     opacity = 0
                 }
