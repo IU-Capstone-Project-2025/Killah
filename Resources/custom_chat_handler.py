@@ -195,64 +195,59 @@ class CustomEmbeddingChatHandler:
             _seq_counter += 1
 
         current_pos = 0
-        all_embs = []
-
+        
+        # --- Новая унифицированная логика ---
+        
+        # 1. Собираем все части в один список
+        all_parts = []
         if context_embedding:
-            all_embs.append(np.array(context_embedding, dtype=np.float32))
-
-        # Обработка эмбеддингов, если они есть
-        if all_embs:
-            # Логиты нужны для последнего эмбеддинга только если за ним не идут текстовые токены
-            logits_flags = [False] * (len(all_embs) - 1) + [not text_tokens]
-            
-            emb_batch = self.create_batch_for_embeddings(
-                embeddings=all_embs,
-                positions=list(range(current_pos, current_pos + len(all_embs))),
-                seq_ids=[seq_id_this_request] * len(all_embs),
-                logits_flags=logits_flags
-            )
-            
-            ret_emb = llama_cpp.llama_decode(llm_instance.ctx, emb_batch)
-            if ret_emb != 0:
-                raise RuntimeError(f"Ошибка декодирования эмбеддинга: {ret_emb}")
-            
-            current_pos += len(all_embs)
-
-        # Обработка текстовых токенов
+            all_parts.append({'type': 'embedding', 'data': np.array(context_embedding, dtype=np.float32)})
+        
         if text_tokens:
-            for i, token in enumerate(text_tokens):
-                is_last_token = (i == len(text_tokens) - 1)
-                
-                token_batch = self.create_batch_for_tokens(
-                    [token], 
-                    [current_pos], 
-                    [seq_id_this_request], 
-                    [is_last_token]
-                )
-                
-                if token_batch is None:
-                    print(f"[WARNING] Skipping invalid token id at position {current_pos}")
-                    continue
+            # Обрабатываем все текстовые токены как один батч
+            all_parts.append({'type': 'tokens', 'data': text_tokens})
 
-                ret_tok = llama_cpp.llama_decode(llm_instance.ctx, token_batch)
-                if ret_tok != 0:
-                    raise RuntimeError(f"Ошибка декодирования токена {i} ({token}): {ret_tok}")
-                
-                current_pos += 1
-
-        # Если не было ни эмбеддингов, ни токенов, добавляем BOS токен для начала генерации
-        if not all_embs and not text_tokens:
+        # Если ничего нет, добавляем BOS токен, чтобы начать генерацию
+        if not all_parts:
             bos_token = llm_instance.token_bos()
-            token_batch = self.create_batch_for_tokens(
-                [bos_token], 
-                [0], 
-                [seq_id_this_request], 
-                [True]
-            )
-            ret_bos = llama_cpp.llama_decode(llm_instance.ctx, token_batch)
-            if ret_bos != 0:
-                raise RuntimeError(f"Ошибка декодирования BOS токена: {ret_bos}")
+            all_parts.append({'type': 'tokens', 'data': [bos_token]})
 
+        # 2. Декодируем все части последовательно
+        for i, part in enumerate(all_parts):
+            is_last_part = (i == len(all_parts) - 1)
+            
+            if part['type'] == 'embedding':
+                emb_batch = self.create_batch_for_embeddings(
+                    embeddings=[part['data']],
+                    positions=[current_pos],
+                    seq_ids=[seq_id_this_request],
+                    logits_flags=[is_last_part] # Логиты только если это последняя часть
+                )
+                ret_emb = llama_cpp.llama_decode(llm_instance.ctx, emb_batch)
+                if ret_emb != 0:
+                    raise RuntimeError(f"Ошибка декодирования эмбеддинга: {ret_emb}")
+                current_pos += 1 # Эмбеддинг считается за одну позицию
+
+            elif part['type'] == 'tokens':
+                tokens_to_process = part['data']
+                # Возвращаем обработку по одному токену, как вы и сказали
+                for j, token in enumerate(tokens_to_process):
+                    # Логиты теперь ставим TRUE для КАЖДОГО токена, чтобы llama.cpp не выводил warning
+                    token_batch = self.create_batch_for_tokens(
+                        [token],
+                        [current_pos],
+                        [seq_id_this_request],
+                        [True]
+                    )
+                    
+                    if token_batch:
+                        ret_tok = llama_cpp.llama_decode(llm_instance.ctx, token_batch)
+                        if ret_tok != 0:
+                            raise RuntimeError(f"Ошибка декодирования токена {j} ({token}): {ret_tok}")
+                        current_pos += 1
+
+        # --- Конец новой логики ---
+        
         # Получаем логиты для генерации
         # Индекс в батче, для которого нужны логиты, теперь 0, т.к. мы обрабатываем по одному
         logits_ptr = llama_cpp.llama_get_logits_ith(llm_instance.ctx, 0)

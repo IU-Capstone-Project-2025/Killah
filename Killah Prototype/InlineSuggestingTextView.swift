@@ -138,7 +138,7 @@ struct InlineSuggestingTextView: NSViewRepresentable {
 
         if textView.committedText() != text && !context.coordinator.isInternallyUpdatingTextBinding {
             textView.clearGhostText()
-            llmEngine.abortSuggestion(for: "autocomplete")
+            llmEngine.abortSuggestion(for: "generation")
             textView.string = text
             DispatchQueue.main.async {
                 context.coordinator.caretCoordinator?.updateCaretPosition(for: textView)
@@ -440,14 +440,14 @@ class Coordinator: NSObject, NSTextViewDelegate {
                         return false
                     } else {
                         tv.clearGhostText()
-                        llmEngine.abortSuggestion(for: "autocomplete")
+                        llmEngine.abortSuggestion(for: "generation")
                         parent.debouncer.cancel()
                         return true
                     }
                 }
                 else if NSMaxRange(affectedCharRange) <= ghostRange.location {
                     tv.clearGhostText()
-                    llmEngine.abortSuggestion(for: "autocomplete")
+                    llmEngine.abortSuggestion(for: "generation")
                     parent.debouncer.cancel()
                     return true
                 }
@@ -487,12 +487,12 @@ class Coordinator: NSObject, NSTextViewDelegate {
             if currentPromptForLLM.isEmpty {
                 print("💤 requestTextCompletion: prompt is empty, skipping")
                 textView.clearGhostText()
-                llmEngine.abortSuggestion(for: "autocomplete")
+                llmEngine.abortSuggestion(for: "generation")
                 return
             }
             
             // Запускаем запрос только если движок реально работает
-            guard llmEngine.getRunnerState(for: "autocomplete") == .running else {
+            guard llmEngine.getRunnerState(for: "generation") == .running else {
                 print("💤 LLM engine not running, skip completion request")
                 return
             }
@@ -514,7 +514,7 @@ class Coordinator: NSObject, NSTextViewDelegate {
             parent.appStateManager.startGeneration(from: .autocomplete)
 
             llmEngine.generateSuggestion(
-                for: "autocomplete",
+                for: "generation",
                 prompt: currentPromptForLLM,
                 isFromCaret: false,
                 taskType: "autocomplete"
@@ -626,7 +626,7 @@ class Coordinator: NSObject, NSTextViewDelegate {
         private func clearAllCompletions(for textView: CustomInlineNSTextView) {
             textView.clearGhostText()
             parent.debouncer.cancel()
-            llmEngine.abortSuggestion(for: "autocomplete")
+            llmEngine.abortSuggestion(for: "generation")
             caretCoordinator?.isGenerating = false
             parent.appStateManager.stopGeneration()
         }
@@ -1011,7 +1011,7 @@ extension InlineSuggestingTextView.Coordinator: LLMInteractionDelegate {
         isProcessingAcceptOrDismiss = true
         
         print("🚫 performSuggestionDismissal called")
-        llmEngine.abortSuggestion(for: "autocomplete")
+        llmEngine.abortSuggestion(for: "generation")
         clearAllCompletions(for: textView)
         parent.debouncer.cancel() // cancel any pending completion
         skipNextCompletion = true // prevent immediate re-fetch

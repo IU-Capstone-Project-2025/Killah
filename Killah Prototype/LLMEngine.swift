@@ -76,9 +76,8 @@ class LLMEngine: ObservableObject {
         
         // Initialize Python script runners
         runners["audio"] = AudioScriptRunner(modelDirectory: modelDir)
-        runners["autocomplete"] = AutocompleteScriptRunner(modelDirectory: modelDir)
+        runners["generation"] = GenerationScriptRunner(modelDirectory: modelDir)
         runners["embeddings"] = EmbeddingsRunner(modelDirectory: modelDir)
-        runners["caret"] = CaretScriptRunner(modelDirectory: modelDir)
         runners["attention"] = AttentionRunner(modelDirectory: modelDir)
 
         NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)
@@ -113,6 +112,7 @@ class LLMEngine: ObservableObject {
         tokenStreamCallback: @escaping (String) -> Void,
         onComplete: @escaping (Result<String, LLMEngine.LLMError>) -> Void
     ) {
+        let script = "generation" // Always use the new unified script
         if activeTasks[script] == true {
             print("⏳ Waiting for previous task in \(script) to complete")
             runners[script]?.abortSuggestion(notifyPython: true)
@@ -146,9 +146,10 @@ class LLMEngine: ObservableObject {
             
             continueGeneration(
                 script: script,
-                prompt: prompt, // Используем оригинальный, не измененный prompt
+                prompt: prompt,
                 loraAdapter: loraAdapterPath,
                 contextEmbedding: contextEmbedding,
+                taskType: taskType, // Pass taskType to continueGeneration
                 tokenStreamCallback: tokenStreamCallback,
                 onComplete: onComplete
             )
@@ -204,6 +205,7 @@ class LLMEngine: ObservableObject {
         prompt: String,
         loraAdapter: String?,
         contextEmbedding: [Float]?,
+        taskType: String?, // Receive taskType
         tokenStreamCallback: @escaping (String) -> Void,
         onComplete: @escaping (Result<String, LLMEngine.LLMError>) -> Void
     ) {
@@ -233,54 +235,45 @@ class LLMEngine: ObservableObject {
             onComplete(.failure(.scriptError("Unknown script: \(script)")))
             return
         }
+
+        // --- Новая, объединенная логика ---
+        var jsonObject: [String: Any] = [:]
         
-        if script == "autocomplete" {
-            let jsonData: [String: Any] = [
-                "prompt": prompt,
-                "lora_path": loraAdapter ?? "",
-                "context_embedding": contextEmbedding ?? NSNull(),
-                "max_tokens": 50,
-                "temperature": 0.7,
-                "min_p": 0.1,
-                "stream": true
-            ]
-            do {
-            let jsonDataSerialized = try JSONSerialization.data(withJSONObject: jsonData)
-            guard let jsonString = String(data: jsonDataSerialized, encoding: .utf8),
-                  let runner = runners[script] else {
-                onComplete(.failure(.scriptError("Failed to serialize JSON or unknown script: \(script)")))
-                return
-            }
-            runner.sendData(jsonString, loraPath: nil, contextEmbedding: nil, tokenStreamCallback: tokenStreamCallback) { result in
-                self.activeTasks[script] = false // Сбрасываем состояние после завершения
-                switch result {
-                case .success(let suggestion):
-                    CacheManager.shared.setCachedSuggestion(suggestion, for: prompt, temperature: self.currentTemperature)
-                    onComplete(.success(suggestion))
-                case .failure(let error):
-                    onComplete(.failure(error))
-                }
-            }
+        // Для аудио-скрипта мы не формируем сложный JSON, а просто передаем промпт как есть
+        if script == "audio" {
+            runner.sendData(prompt, tokenStreamCallback: tokenStreamCallback, onComplete: onComplete)
+            return
         }
-        catch {
-            onComplete(.failure(.scriptError("JSON serialization failed: \(error.localizedDescription)")))
+
+        // Для генерации текста (основной сценарий)
+        jsonObject["prompt"] = prompt
+        if let lora = loraAdapter {
+            jsonObject["lora_path"] = lora
         }
-        } else {
-            runner.sendData(prompt, loraPath: nil, contextEmbedding: nil, tokenStreamCallback: tokenStreamCallback) { result in
-                self.activeTasks[script] = false // Сбрасываем состояние после завершения
-                switch result {
-                case .success(let suggestion):
-                    CacheManager.shared.setCachedSuggestion(suggestion, for: prompt, temperature: self.currentTemperature)
-                    onComplete(.success(suggestion))
-                case .failure(let error):
-                    onComplete(.failure(error))
-                }
+        if let embedding = contextEmbedding {
+            jsonObject["context_embedding"] = embedding
+        }
+        if let task = taskType {
+            jsonObject["task_type"] = task
+        }
+
+        // Serialize the dictionary to a JSON string
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: jsonObject),
+              let jsonString = String(data: jsonData, encoding: .utf8) else {
+            print("❌ Error creating JSON payload.")
+            onComplete(.failure(.promptEncodingError))
+            activeTasks[script] = false
+            return
+        }
+
+        runner.sendData(
+            jsonString,
+            tokenStreamCallback: tokenStreamCallback,
+            onComplete: { result in
+                self.activeTasks[script] = false
+                onComplete(result)
             }
-        }
-        
-        
-        
-        updateEngineState(runner.state)
+        )
     }
     
     // Вспомогательные функции для извлечения и парсинга эмбеддингов
@@ -329,7 +322,7 @@ extension LLMEngine {
                 return
             }
             
-            runner.sendData(jsonString, loraPath: nil, contextEmbedding: nil, tokenStreamCallback: { _ in }, onComplete: { result in
+            runner.sendData(jsonString, tokenStreamCallback: { _ in }, onComplete: { result in
                 switch result {
                 case .success(let output):
                     do {
@@ -360,7 +353,7 @@ extension LLMEngine {
             return
         }
         let input = text
-        runner.sendData(input, loraPath: nil, contextEmbedding: nil, tokenStreamCallback: { _ in }) { result in
+        runner.sendData(input, tokenStreamCallback: { _ in }) { result in
             switch result {
             case .success(let output):
                 do {
@@ -427,25 +420,20 @@ extension LLMEngine {
     }
         
     
-    func stopEngine(for script: String? = nil) {
-        if let script = script, let runner = runners[script] {
-            runner.stop()
-            updateEngineState(runner.state)
-        } else {
-            modelServer.stop()
-            runners.forEach { $0.value.stop() }
-            updateEngineState(.stopped)
-        }
+    func stopEngine() {
+        modelServer.stop()
+        runners.forEach { $0.value.stop() }
+        updateEngineState(.stopped)
     }
     
     func abortSuggestion(for script: String, notifyPython: Bool = true) {
-        guard let runner = runners[script] else {
-            print("❌ Unknown script: \(script)")
+        let scriptToAbort = (script == "caret" || script == "autocomplete") ? "generation" : script
+        guard let runner = runners[scriptToAbort] else {
+            print("❌ Cannot abort: unknown script \(scriptToAbort)")
             return
         }
-        print("ℹ️ Aborting suggestion for \(script)")
         runner.abortSuggestion(notifyPython: notifyPython)
-        updateEngineState(runner.state)
+        activeTasks[scriptToAbort] = false
     }
     
     private func updateEngineState(_ newState: EngineState) {

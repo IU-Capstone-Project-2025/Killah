@@ -25,14 +25,19 @@ class ModelProxy:
             return None
     
     def create_completion(self, prompt, max_tokens, temperature, min_p, stream=True):
+        endpoint = f"{self.server_url}/v1/chat/completions"
+
         final_prompt = prompt
         lora_adapter = None
+        context_embedding = None
+
         try:
             # Пытаемся распарсить prompt как JSON
             data = json.loads(prompt)
             if isinstance(data, dict):
                 final_prompt = data.get("prompt", "")
                 lora_adapter = data.get("lora_path")
+                context_embedding = data.get("context_embedding") # Извлекаем эмбеддинг
         except json.JSONDecodeError:
             # Если не JSON, считаем, что это обычный текстовый промпт
             pass
@@ -44,8 +49,16 @@ class ModelProxy:
             "min_p": min_p,
             "stream": stream
         }
+
         if lora_adapter:
             payload["lora_adapters"] = [{"path": lora_adapter, "scale": 1.0}]
+        
+        if context_embedding:
+            # Если есть эмбеддинг, добавляем его в payload
+            # и очищаем текстовый prompt, чтобы избежать дублирования
+            payload["messages"][0]["content"] = "" # Очищаем prompt, т.к. используем эмбеддинг
+            payload["context_embedding"] = context_embedding
+
         if stream:
             response = requests.post(endpoint, json=payload, stream=True)
             response.raise_for_status()

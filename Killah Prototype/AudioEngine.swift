@@ -225,7 +225,9 @@ class AudioEngine: NSObject, ObservableObject, SFSpeechRecognizerDelegate {
     
     func stopRecording() {
         guard isRecording, !isStopping else {
-            print("⚠️ stopRecording called but isRecording is false")
+            if !isRecording {
+                print("⚠️ stopRecording called but isRecording is false")
+            }
             return
         }
         
@@ -243,11 +245,7 @@ class AudioEngine: NSObject, ObservableObject, SFSpeechRecognizerDelegate {
         audioEngine.inputNode.removeTap(onBus: 0)
         
         recognitionRequest?.endAudio()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-            self.recognitionTask?.cancel()
-            self.recognitionRequest = nil
-            self.recognitionTask = nil
-        }
+        recognitionTask?.cancel()
         
         audioFile = nil
         
@@ -255,7 +253,11 @@ class AudioEngine: NSObject, ObservableObject, SFSpeechRecognizerDelegate {
             self.isRecording = false
             self.isPaused = false
             self.isStopping = false
+            
+            self.recognitionRequest = nil
+            self.recognitionTask = nil
         }
+        
         if let path = self.savedAudioFilePath ?? self.audioFilePath {
             print("Audio file path: \(path.absoluteString)")
             if FileManager.default.fileExists(atPath: path.path) {

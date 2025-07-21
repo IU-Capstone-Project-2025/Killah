@@ -299,19 +299,31 @@ class CaretUICoordinator: ObservableObject {
 //        }
         
         let taskType = selectedRange != nil ? "rewriting" : "generation"
-        
+        let scriptToRun = "generation" // Always use the unified script
+
+        var firstTokenReceived = false
+
         llmEngine.generateSuggestion(
-            for: "autocomplete",
+            for: scriptToRun,
             prompt: finalPrompt,
             isFromCaret: false,
             taskType: taskType,
             tokenStreamCallback: { [weak self] token in
                 DispatchQueue.main.async {
-                    if selectedRange != nil {
-                        // For replacement, we wait for the full text.
-                    } else {
-                        self?.textInsertionHandler?(token)
+                    guard let self = self, let textView = self.textView, let range = selectedRange else { return }
+
+                    if !firstTokenReceived {
+                        // При получении первого токена удаляем выделенный текст
+                        textView.textStorage?.replaceCharacters(in: range, with: "")
+                        firstTokenReceived = true
                     }
+                    
+                    // Вставляем новый токен на место курсора
+                    let insertionRange = NSRange(location: range.location, length: 0)
+                    textView.textStorage?.replaceCharacters(in: insertionRange, with: token)
+                    // Сдвигаем курсор
+                    textView.setSelectedRange(NSRange(location: range.location + token.count, length: 0))
+
                 }
             },
             onComplete: { [weak self] result in
@@ -322,12 +334,10 @@ class CaretUICoordinator: ObservableObject {
                     
                     switch result {
                     case .success(let fullSuggestion):
-                        if let range = selectedRange {
-                            self.textView?.textStorage?.replaceCharacters(in: range, with: fullSuggestion)
-                        } else if fullSuggestion.isEmpty {
+                        print("✅ [CaretUI] Generation complete.")
+                        if fullSuggestion.isEmpty {
                             self.textView?.clearGhostText()
                         }
-                        // If not replacing, the text was already inserted via stream.
                     case .failure(let error):
                         print("❌ Generation failed: \(error)")
                         if case LLMEngine.LLMError.aborted = error {
@@ -479,7 +489,7 @@ class CaretUICoordinator: ObservableObject {
         let taskType = replacementRange != nil ? "rewriting" : "generation"
         
         llmEngine.generateSuggestion(
-            for: "caret",
+            for: "generation",
             prompt: prompt,
             isFromCaret: true,
             taskType: taskType,

@@ -11,11 +11,10 @@
 		404EF32F2E2DA5E800BC3BFC /* custom_chat_handler.py in Resources */ = {isa = PBXBuildFile; fileRef = 404EF3242E2DA5E800BC3BFC /* custom_chat_handler.py */; };
 		404EF3302E2DA5E800BC3BFC /* run_server.py in Resources */ = {isa = PBXBuildFile; fileRef = 404EF3272E2DA5E800BC3BFC /* run_server.py */; };
 		404EF3352E2DBE4E00BC3BFC /* attention.py in Resources */ = {isa = PBXBuildFile; fileRef = 404EF3332E2DBE4E00BC3BFC /* attention.py */; };
-		404EF3362E2DBE4E00BC3BFC /* caret.py in Resources */ = {isa = PBXBuildFile; fileRef = 404EF3342E2DBE4E00BC3BFC /* caret.py */; };
 		404EF3392E2DBFAC00BC3BFC /* main_llm.py in Resources */ = {isa = PBXBuildFile; fileRef = 404EF3372E2DBFAC00BC3BFC /* main_llm.py */; };
 		404EF33A2E2DBFAC00BC3BFC /* text_to_embeddings.py in Resources */ = {isa = PBXBuildFile; fileRef = 404EF3382E2DBFAC00BC3BFC /* text_to_embeddings.py */; };
+		404EF3732E2E837E00BC3BFC /* generation.py in Resources */ = {isa = PBXBuildFile; fileRef = 404EF3722E2E837E00BC3BFC /* generation.py */; };
 		408AC4C02DC7B6EE00ED87D4 /* requirements.txt in Resources */ = {isa = PBXBuildFile; fileRef = 408AC4BD2DC7B6EE00ED87D4 /* requirements.txt */; };
-		761035C52E2E2F6D00485951 /* autocomplete.py in Resources */ = {isa = PBXBuildFile; fileRef = 761035C42E2E2F6D00485951 /* autocomplete.py */; };
 		761035C72E2E2F7900485951 /* audio.py in Resources */ = {isa = PBXBuildFile; fileRef = 761035C62E2E2F7900485951 /* audio.py */; };
 		7634DCF32E24282100C5A3D9 /* config.env in Resources */ = {isa = PBXBuildFile; fileRef = 7634DCF22E24282100C5A3D9 /* config.env */; };
 /* End PBXBuildFile section */
@@ -29,13 +28,12 @@
 		404EF3272E2DA5E800BC3BFC /* run_server.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; name = run_server.py; path = Resources/run_server.py; sourceTree = "<group>"; };
 		404EF3282E2DA5E800BC3BFC /* main_llm.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; name = main_llm.py; path = Resources/main_llm.py; sourceTree = "<group>"; };
 		404EF3332E2DBE4E00BC3BFC /* attention.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; name = attention.py; path = Resources/attention.py; sourceTree = "<group>"; };
-		404EF3342E2DBE4E00BC3BFC /* caret.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; name = caret.py; path = Resources/caret.py; sourceTree = "<group>"; };
 		404EF3372E2DBFAC00BC3BFC /* main_llm.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; name = main_llm.py; path = Resources/main_llm.py; sourceTree = "<group>"; };
 		404EF3382E2DBFAC00BC3BFC /* text_to_embeddings.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; name = text_to_embeddings.py; path = Resources/text_to_embeddings.py; sourceTree = "<group>"; };
+		404EF3722E2E837E00BC3BFC /* generation.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; name = generation.py; path = Resources/generation.py; sourceTree = "<group>"; };
 		408AC4BD2DC7B6EE00ED87D4 /* requirements.txt */ = {isa = PBXFileReference; lastKnownFileType = text; name = requirements.txt; path = Resources/requirements.txt; sourceTree = "<group>"; };
 		408B41602DCBA8A800318056 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		40C7315F2DC63936004D753D /* Killah Prototype.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Killah Prototype.app"; sourceTree = BUILT_PRODUCTS_DIR; };
-		761035C42E2E2F6D00485951 /* autocomplete.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; name = autocomplete.py; path = Resources/autocomplete.py; sourceTree = "<group>"; };
 		761035C62E2E2F7900485951 /* audio.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; name = audio.py; path = Resources/audio.py; sourceTree = "<group>"; };
 		7634DCF22E24282100C5A3D9 /* config.env */ = {isa = PBXFileReference; lastKnownFileType = text; name = config.env; path = Resources/config.env; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -62,12 +60,11 @@
 		40C731562DC63936004D753D = {
 			isa = PBXGroup;
 			children = (
+				404EF3722E2E837E00BC3BFC /* generation.py */,
 				761035C62E2E2F7900485951 /* audio.py */,
-				761035C42E2E2F6D00485951 /* autocomplete.py */,
 				404EF3372E2DBFAC00BC3BFC /* main_llm.py */,
 				404EF3382E2DBFAC00BC3BFC /* text_to_embeddings.py */,
 				404EF3332E2DBE4E00BC3BFC /* attention.py */,
-				404EF3342E2DBE4E00BC3BFC /* caret.py */,
 				404EF3242E2DA5E800BC3BFC /* custom_chat_handler.py */,
 				404EF3282E2DA5E800BC3BFC /* main_llm.py */,
 				404EF3202E2DA5E700BC3BFC /* min_p_sampling.py */,
@@ -160,12 +157,11 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				404EF3732E2E837E00BC3BFC /* generation.py in Resources */,
 				761035C72E2E2F7900485951 /* audio.py in Resources */,
-				761035C52E2E2F6D00485951 /* autocomplete.py in Resources */,
 				404EF3392E2DBFAC00BC3BFC /* main_llm.py in Resources */,
 				404EF33A2E2DBFAC00BC3BFC /* text_to_embeddings.py in Resources */,
 				404EF3352E2DBE4E00BC3BFC /* attention.py in Resources */,
-				404EF3362E2DBE4E00BC3BFC /* caret.py in Resources */,
 				404EF32F2E2DA5E800BC3BFC /* custom_chat_handler.py in Resources */,
 				408AC4C02DC7B6EE00ED87D4 /* requirements.txt in Resources */,
 				404EF3302E2DA5E800BC3BFC /* run_server.py in Resources */,
@@ -364,7 +360,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
-				DEVELOPMENT_TEAM = 4Q826KG7YN;
+				DEVELOPMENT_TEAM = FK825CF827;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
@@ -414,7 +410,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
-				DEVELOPMENT_TEAM = 4Q826KG7YN;
+				DEVELOPMENT_TEAM = FK825CF827;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;

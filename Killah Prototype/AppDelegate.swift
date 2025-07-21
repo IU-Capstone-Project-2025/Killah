@@ -117,10 +117,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         
         AppStateManager.shared.isPythonScriptsStarting = true
         
-        llmEngine.startEngine(for: "autocomplete")
+        llmEngine.startEngine(for: "generation")
         llmEngine.startEngine(for: "audio")
         llmEngine.startEngine(for: "embeddings")
-        llmEngine.startEngine(for: "caret")
         llmEngine.startEngine(for: "attention")
 
         
@@ -132,12 +131,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func checkPythonScriptsState() {
         guard let llmEngine = AppDelegate.dependencies?.llmEngine else { return }
         
-        let autocompleteState = llmEngine.getRunnerState(for: "autocomplete")
+        let generationState = llmEngine.getRunnerState(for: "generation")
         let audioState = llmEngine.getRunnerState(for: "audio")
         
-        if autocompleteState == .running && audioState == .running {
+        if generationState == .running && audioState == .running {
             AppStateManager.shared.isPythonScriptsStarting = false
-        } else if autocompleteState == LLMEngine.EngineState.error("") || audioState == LLMEngine.EngineState.error("") {
+        } else if generationState == LLMEngine.EngineState.error("") || audioState == LLMEngine.EngineState.error("") {
             AppStateManager.shared.isPythonScriptsStarting = false
         } else {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
