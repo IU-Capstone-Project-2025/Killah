@@ -3,6 +3,8 @@
 Custom Chat Handler with embedding injection support
 Based on working llama-cpp-python 0.3.14 approach
 """
+import os
+import sys
 import numpy as np
 import ctypes
 import threading
@@ -60,23 +62,19 @@ class CustomEmbeddingChatHandler:
             return self._lora_cache[lora_path]
         
         # Создаем новый экземпляр с LoRA (переиспользует веса базовой модели)
-        try:
-            lora_llm = Llama(
-                model_path=self.model_path,
-                lora_adapters=[{"path": lora_path, "scale": 1.0}],
-                n_ctx=4096,
-                embedding=True,
-                n_gpu_layers=-1,
-                verbose=False,
-                cache=True  # Переиспользует загруженные веса
-            )
-            # Кэшируем для повторного использования
-            self._lora_cache[lora_path] = lora_llm
-            print(f"✅ Created new LoRA instance: {lora_path}")
-            return lora_llm
-        except Exception as e:
-            print(f"❌ Failed to create LoRA instance: {e}")
-            return self.base_llm
+        lora_llm = Llama(
+            model_path=self.model_path,
+            lora_adapters=[{"path": lora_path, "scale": 1.0}],
+            n_ctx=4096,
+            embedding=True,
+            n_gpu_layers=-1,
+            verbose=False,
+            cache=True  # Переиспользует загруженные веса
+        )
+        # Кэшируем для повторного использования
+        self._lora_cache[lora_path] = lora_llm
+        print(f"✅ Created new LoRA instance: {lora_path}")
+        return lora_llm
 
     def create_random_embedding(self):
         """Создает случайный эмбеддинг для тестирования."""
@@ -177,14 +175,9 @@ class CustomEmbeddingChatHandler:
         # Получаем нужный экземпляр модели (с LoRA или без)
         llm_instance = self.get_llm_with_lora(lora_path)
         
-        try:
-            return self._internal_complete(request, llm_instance)
-        except Exception as e:
-            print(f"❌ Error in complete: {e}")
-            # В случае ошибки возвращаемся к базовой модели
-            return self._internal_complete(request, self.base_llm)
+        return self._internal_complete(request, llm_instance, lora_path)
     
-    def _internal_complete(self, request, llm_instance):
+    def _internal_complete(self, request, llm_instance, lora_path=None):
         global _seq_counter
         # Извлекаем параметры
         messages = request.get("messages", [])
@@ -212,10 +205,6 @@ class CustomEmbeddingChatHandler:
 
         prompt_text = "\\n".join(prompt_parts)
         
-        # Если эмбеддинги не предоставлены, используем случайные
-        if personalization_emb is None:
-            personalization_emb = self.create_random_embedding()
-        
         # Токенизация текста
         text_tokens = llm_instance.tokenize(prompt_text.encode("utf-8"), add_bos=False) # add_bos=False, т.к. модель сама добавит
         
@@ -226,7 +215,7 @@ class CustomEmbeddingChatHandler:
 
         current_pos = 0
         
-        # Сначала обработаем эмбеддинги
+        # Обрабатываем эмбеддинги только если они реально предоставлены
         all_embs = []
         if personalization_emb is not None:
             all_embs.append(personalization_emb)
@@ -237,28 +226,34 @@ class CustomEmbeddingChatHandler:
             current_pos += len(all_embs)
             seq_ids = [seq_id_this_request] * len(all_embs)
             
-            # Логиты: если следом идут токены, последний эмбеддинг ДОЛЖЕН выдавать логиты,
-            # иначе llama.cpp предупреждает ("embeddings required but some input tokens were not marked as outputs").
-            logits_flags = [False] * len(all_embs)
-            if not text_tokens:
-                logits_flags[-1] = True
+            # Логиты: только последний элемент должен выводить логиты
+            logits_flags = [False] * (len(all_embs) - 1) + [True]
                 
             batch = self.create_batch_for_embeddings(all_embs, positions, seq_ids, logits_flags)
             ret_emb = llama_cpp.llama_decode(llm_instance.ctx, batch)
             if ret_emb != 0:
-                raise RuntimeError(f"Ошибка декодирования эмбеддингов: {ret_emb}")
+                print(f"❌ Error decoding embeddings: {ret_emb}. Resetting KV cache and retrying.", file=sys.stderr, flush=True)
+                # Пытаемся очистить KV cache и повторить
+                llama_cpp.llama_kv_cache_clear(llm_instance.ctx)
+                ret_emb = llama_cpp.llama_decode(llm_instance.ctx, batch)
+                if ret_emb != 0:
+                    raise RuntimeError(f"Ошибка декодирования эмбеддингов после сброса KV cache: {ret_emb}")
+                else:
+                    print(f"✅ Successfully recovered after KV cache reset", file=sys.stderr, flush=True)
         
         # Теперь обрабатываем текстовые токены, но по одному
         if text_tokens:
             for i, token in enumerate(text_tokens):
-                # Для всех токенов, кроме последнего, logits=False. Для последнего — True.
+                # Логиты: если есть эмбеддинги, то логиты НЕ нужны для токенов (они уже есть у эмбеддингов)
+                # Если нет эмбеддингов, то логиты нужны только для последнего токена
                 is_last_token = (i == len(text_tokens) - 1)
+                need_logits = is_last_token and not all_embs
                 
                 token_batch = self.create_batch_for_tokens(
                     [token], 
                     [current_pos], 
                     [seq_id_this_request], 
-                    [is_last_token]
+                    [need_logits]
                 )
                 
                 if token_batch is None:
@@ -272,15 +267,25 @@ class CustomEmbeddingChatHandler:
                 
                 current_pos += 1
 
+        # Если нет ни эмбеддингов, ни токенов, добавляем BOS токен
+        if not all_embs and not text_tokens:
+            bos_token = llm_instance.token_bos()
+            token_batch = self.create_batch_for_tokens(
+                [bos_token], 
+                [current_pos], 
+                [seq_id_this_request], 
+                [True]  # Логиты нужны
+            )
+            ret_tok = llama_cpp.llama_decode(llm_instance.ctx, token_batch)
+            if ret_tok != 0:
+                raise RuntimeError(f"Ошибка декодирования BOS токена: {ret_tok}")
+
         # Получаем логиты для генерации
-        # Индекс для llama_get_logits_ith - это индекс в последнем обработанном батче.
-        # Поскольку наш последний батч (будь то эмбеддинг или токен) содержал один элемент,
-        # индекс всегда будет 0.
         logits_ptr = llama_cpp.llama_get_logits_ith(llm_instance.ctx, 0)
         
         # Проверка на null pointer, если логиты не были сгенерированы
         if not logits_ptr:
-             raise RuntimeError("Не удалось получить логиты от llama_get_logits_ith. Убедитесь, что для последнего элемента в батче (эмбеддинга или токена) установлен флаг logits=True.")
+             raise RuntimeError("Не удалось получить логиты от llama_get_logits_ith.")
         
         vocab_size = llm_instance.n_vocab()
         logits = np.ctypeslib.as_array(logits_ptr, shape=(vocab_size,))

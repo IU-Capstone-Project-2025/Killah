@@ -12,6 +12,11 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 if script_dir not in sys.path:
     sys.path.insert(0, script_dir)
 
+def get_lora_path(task_type="rewriting"):
+    """Получаем правильный путь к LoRA адаптеру для конкретной задачи"""
+    model_dir = os.environ.get("MODEL_DIR")
+    return os.path.join(model_dir, "lora", f"{task_type}_lora_f16.gguf")
+
 # Replaced blocking wait loop with exponential back-off (max 120 s)
 def wait_for_server(server_url: str, timeout: int = 120, initial_delay: float = 1.0, max_delay: float = 8.0) -> bool:
     """Poll server_url/health until HTTP 200 or timeout seconds passed."""
@@ -99,7 +104,7 @@ if __name__ == "__main__":
     model = initialize_model()
     if model:
         print("READY", flush=True)
-    lora_adapter = "lora/rewriting_lora_f16.gguf"
+    lora_adapter = get_lora_path("rewriting")  # Получаем правильный путь динамически
     while True:
         readable, _, _ = select.select([sys.stdin], [], [], 1.0)
         if readable:

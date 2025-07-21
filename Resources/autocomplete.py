@@ -4,6 +4,7 @@ import select
 import json
 import traceback
 import requests
+import os
 from main_llm import get_model_loader
 
 # Максимальное количество токенов для автозаполнения
@@ -34,6 +35,11 @@ def initialize_model():
     else:
         print("Model server did not start within timeout.", file=sys.stderr, flush=True)
         return False
+
+def get_autocomplete_lora_path():
+    """Получаем правильный путь к autocomplete LoRA адаптеру"""
+    model_dir = os.environ.get("MODEL_DIR")
+    return os.path.join(model_dir, "lora", "autocomplete_lora_f16.gguf")
 
 def stream_suggestions(prompt_text: str, temperature: float, lora_path: str, min_p: float = 0.1):
     """Стримим предложения через HTTP запрос к серверу с LoRA адаптером"""
@@ -112,7 +118,7 @@ if __name__ == "__main__":
     current_prompt = None
     interrupted = False
     current_temperature = 0.8
-    current_lora_adapter = "/Users/vladislavkalinichenko/Library/Containers/com.poinka.Killah-Prototype/Data/Library/Application Support/KillahPrototype/models/lora/autocomplete_lora_f16.gguf"
+    current_lora_adapter = get_autocomplete_lora_path()
     
     while True:
         try:
