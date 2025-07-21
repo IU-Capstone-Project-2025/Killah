@@ -70,6 +70,15 @@ if __name__ == "__main__":
             result = custom_handler.complete(req_json, lora_path=lora_path)
             return JSONResponse(result)
 
+
+    @app.post("/embedding")
+    async def generate_embedding(request: Request):
+        req_json = await request.json()
+        text = req_json.get("content", "")
+        embedding = llm.embed(text)
+        return JSONResponse([{"embedding": embedding}])
+        
+        
     # Запуск сервера
     uvicorn.run(
         app,
