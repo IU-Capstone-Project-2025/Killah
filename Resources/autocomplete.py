@@ -41,34 +41,65 @@ def get_autocomplete_lora_path():
     model_dir = os.environ.get("MODEL_DIR")
     return os.path.join(model_dir, "lora", "autocomplete_lora_f16.gguf")
 
-def stream_suggestions(prompt_text: str, temperature: float, lora_path: str, min_p: float = 0.1):
-    """Стримим предложения через HTTP запрос к серверу с LoRA адаптером"""
+def generate_prompt_embedding(prompt: str) -> list:
+    """Генерируем эмбеддинг для промпта через HTTP API"""
     try:
-        if prompt_text.startswith('{"'):
-            prompt_data = json.loads(prompt_text)
-            actual_prompt = prompt_data.get("prompt", "")
-            lora_path = prompt_data.get("lora_path", lora_path)
-        else:
-            actual_prompt = prompt_text
-        
-        payload = {
-            "prompt": actual_prompt,
-            "messages": [{"role": "user", "content": actual_prompt}],
-            "max_tokens": MAX_SUGGESTION_TOKENS,
-            "temperature": temperature,
-            "min_p": min_p,
-            "stream": True,
-            "lora_path": lora_path
-        }
-        
-        print(f"Applying LoRA: {lora_path}", file=sys.stderr, flush=True)
-        
         response = requests.post(
-            "http://localhost:8080/custom_completion",
-            json=payload,
-            stream=True,
-            timeout=30
+            "http://localhost:8080/embedding",
+            json={"content": prompt},
+            timeout=10
         )
+        if response.status_code == 200:
+            data = response.json()
+            return data[0]["embedding"]
+        else:
+            print(f"❌ Failed to generate embedding: {response.status_code}", file=sys.stderr, flush=True)
+            return []
+    except Exception as e:
+        print(f"❌ Error generating embedding: {e}", file=sys.stderr, flush=True)
+        return []
+
+def get_personalized_context(prompt_embedding: list) -> str:
+    """Получаем персонализированный контекст через attention механизм"""
+    if not prompt_embedding:
+        return ""
+    
+    try:
+        # Здесь должна быть логика получения персонализированных документов
+        # Пока возвращаем пустую строку - это будет реализовано позже
+        return ""
+    except Exception as e:
+        print(f"❌ Error getting personalized context: {e}", file=sys.stderr, flush=True)
+        return ""
+
+def stream_suggestions(prompt_text: str, temperature: float, lora_path: str, min_p: float = 0.1, context_embedding: list = None):
+    """Стримим предложения через HTTP запрос к серверу с LoRA адаптером и персонализацией"""
+    try:
+        payload_from_swift = json.loads(prompt_text)
+        actual_prompt = payload_from_swift.get("prompt", "")
+        lora_path = payload_from_swift.get("lora_path", lora_path)
+        context_embedding = payload_from_swift.get("context_embedding", context_embedding)
+    except json.JSONDecodeError:
+        actual_prompt = prompt_text
+
+    payload = {
+        "prompt": actual_prompt,
+        "max_tokens": MAX_SUGGESTION_TOKENS,
+        "temperature": temperature,
+        "min_p": min_p,
+        "stream": True,
+        "lora_path": lora_path
+    }
+    
+    if context_embedding:
+        payload["context_embedding"] = context_embedding
+
+    try:
+        print(f"🎯 Autocomplete using LoRA: {lora_path}", file=sys.stderr, flush=True)
+        if context_embedding:
+            print(f"🎯 With personalized context: {context_embedding[:100]}...", file=sys.stderr, flush=True)
+        
+        response = requests.post("http://127.0.0.1:8080/custom_completion", json=payload, stream=True)
         
         if response.status_code != 200:
             print(f"Server error: {response.status_code} {response.text}", file=sys.stderr, flush=True)
@@ -95,7 +126,6 @@ def stream_suggestions(prompt_text: str, temperature: float, lora_path: str, min
                     delta = data.get("choices", [{}])[0].get("delta", {})
                     if "content" in delta and delta["content"]:
                         content = delta["content"]
-                        print(f"Yielding token: '{content}'", file=sys.stderr, flush=True)
                         yield content
 
                 except json.JSONDecodeError:

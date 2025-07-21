@@ -76,19 +76,48 @@ struct DocumentItem: Identifiable {
     
     static func loadFromDirectory(context: ModelContext) -> [DocumentItem] {
         let fileManager = FileManager.default
-        
-        // Используем системную папку Documents пользователя
-        let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-        let killahDocumentsURL = documentsURL.appendingPathComponent("Killah")
-        
-        let folderExists = fileManager.fileExists(atPath: killahDocumentsURL.path)
-        
-        if !folderExists {
-            return []
+        var targetURL: URL?
+
+        if let bookmarkData = UserDefaults.standard.data(forKey: "DefaultDocumentsFolderBookmark") {
+            do {
+                var isStale = false
+                targetURL = try URL(resolvingBookmarkData: bookmarkData, options: .withSecurityScope, relativeTo: nil, bookmarkDataIsStale: &isStale)
+                if isStale {
+                    // Stale bookmark, need to re-authorize
+                    targetURL = nil
+                }
+            } catch {
+                print("Error resolving bookmark: \(error)")
+                targetURL = nil
+            }
         }
-        
+
+        if targetURL == nil {
+            let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+            targetURL = documentsURL.appendingPathComponent("Killah")
+        }
+
+        guard let url = targetURL else { return [] }
+
+        let shouldStopAccessing = url.startAccessingSecurityScopedResource()
+        defer {
+            if shouldStopAccessing {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        if !fileManager.fileExists(atPath: url.path) {
+            do {
+                try fileManager.createDirectory(at: url, withIntermediateDirectories: true, attributes: nil)
+                print("✅ Created directory at \(url.path)")
+            } catch {
+                print("🫩 Failed to create directory at \(url.path): \(error.localizedDescription)")
+                return []
+            }
+        }
+
         do {
-            let fileURLs = try fileManager.contentsOfDirectory(at: killahDocumentsURL, includingPropertiesForKeys: [.creationDateKey], options: [])
+            let fileURLs = try fileManager.contentsOfDirectory(at: url, includingPropertiesForKeys: [.creationDateKey], options: [])
             
             let documents = fileURLs
                 .filter { $0.pathExtension == "txt" || $0.pathExtension == "rtf" }

@@ -361,12 +361,6 @@ struct DocumentCard: View {
                                // Обновляем существующую запись
                                existing.embeddingData = embeddingData
                                existing.isPersonalized = true
-                               do {
-                                   try context.save()
-                                   print("✅ Successfully saved context for document: \(fileURL.lastPathComponent)")
-                               } catch {
-                                   print("🫩 Failed to save context: \(error)")
-                               }
                                print("✅ Обновлён существующий эмбеддинг для документа: \(fileURL.lastPathComponent)")
                            } else {
                                // Создаём новую запись
@@ -376,18 +370,16 @@ struct DocumentCard: View {
                                    isPersonalized: true,
                                    documentURL: fileURL
                                )
-                               DispatchQueue.main.async {
-                                   do {
-                                       context.insert(embedding)
-                                       try context.save()
-                                       print("✅ Successfully saved context for document: \(fileURL.lastPathComponent)")
-                                       let allEmbeddings = try? context.fetch(FetchDescriptor<Embedding>())
-                                       print("ℹ️ Всего эмбеддингов в базе: \(allEmbeddings?.count ?? 0)")
-                                   } catch {
-                                       print("🫩 Failed to save context: \(error.localizedDescription)")
-                                   }
-                               }
+                               context.insert(embedding)
+                               print("✅ Создан новый эмбеддинг для документа: \(fileURL.lastPathComponent)")
                            }
+                           
+                           // Сохраняем изменения в контексте
+                           try context.save()
+                           print("✅ Контекст успешно сохранен для документа: \(fileURL.lastPathComponent)")
+                           let allEmbeddings = try? context.fetch(FetchDescriptor<Embedding>())
+                           print("ℹ️ Всего эмбеддингов в базе: \(allEmbeddings?.count ?? 0)")
+                           
                        } catch {
                            print("🫩 Ошибка сохранения эмбеддингов в SwiftData: \(error)")
                        }

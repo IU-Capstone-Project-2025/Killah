@@ -40,9 +40,13 @@ struct SettingsView: View {
                         panel.message = "Select default documents folder".localized
                         
                         if panel.runModal() == .OK, let url = panel.url {
-                            documentsPath = url.path
-                            UserDefaults.standard.set(url.path, forKey: "DefaultOpenDirectory")
-                            UserDefaults.standard.synchronize()
+                            do {
+                                let bookmarkData = try url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil)
+                                UserDefaults.standard.set(bookmarkData, forKey: "DefaultDocumentsFolderBookmark")
+                                documentsPath = url.path
+                            } catch {
+                                print("Error creating bookmark: \(error)")
+                            }
                         }
                         #else
                         // iOS/iPadOS: используем DocumentPicker
@@ -189,7 +193,20 @@ struct SettingsView: View {
     }
     
     private func loadDocumentsPath() {
-        documentsPath = UserDefaults.standard.string(forKey: "DefaultOpenDirectory") ?? ""
+        if let bookmarkData = UserDefaults.standard.data(forKey: "DefaultDocumentsFolderBookmark") {
+            do {
+                var isStale = false
+                let url = try URL(resolvingBookmarkData: bookmarkData, options: .withSecurityScope, relativeTo: nil, bookmarkDataIsStale: &isStale)
+                if isStale {
+                    // Handle stale bookmark if necessary
+                }
+                documentsPath = url.path
+            } catch {
+                print("Error resolving bookmark: \(error)")
+            }
+        } else {
+            documentsPath = ""
+        }
     }
     
     private func deleteAllModels() {
@@ -212,10 +229,8 @@ struct SettingsView: View {
     }
     
     private func resetDocumentsPath() {
-        let defaultPath = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Documents/Killah").path
-        documentsPath = defaultPath
-        UserDefaults.standard.set(defaultPath, forKey: "DefaultOpenDirectory")
-        UserDefaults.standard.synchronize()
+        documentsPath = ""
+        UserDefaults.standard.removeObject(forKey: "DefaultDocumentsFolderBookmark")
     }
     
     private func resetAllSettings() {

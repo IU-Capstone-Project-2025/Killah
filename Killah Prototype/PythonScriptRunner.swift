@@ -5,7 +5,7 @@ protocol PythonScriptRunner {
     var scriptName: String { get }
     var state: LLMEngine.EngineState { get }
     func start()
-    func sendData(_ data: String, loraPath: String?, tokenStreamCallback: @escaping (String) -> Void, onComplete: @escaping (Result<String, LLMEngine.LLMError>) -> Void)
+    func sendData(_ data: String, loraPath: String?, contextEmbedding: [Float]?, tokenStreamCallback: @escaping (String) -> Void, onComplete: @escaping (Result<String, LLMEngine.LLMError>) -> Void)
     func sendCommand(_ command: String)
     func stop()
     func abortSuggestion(notifyPython: Bool)
@@ -114,7 +114,7 @@ class BaseScriptRunner: NSObject, PythonScriptRunner {
         }
     }
 
-    func sendData(_ data: String, loraPath: String? = nil, tokenStreamCallback: @escaping (String) -> Void, onComplete: @escaping (Result<String, LLMEngine.LLMError>) -> Void) {
+    func sendData(_ data: String, loraPath: String? = nil, contextEmbedding: [Float]? = nil, tokenStreamCallback: @escaping (String) -> Void, onComplete: @escaping (Result<String, LLMEngine.LLMError>) -> Void) {
         guard let runningTask = task, runningTask.isRunning, let stdin = stdinPipe else {
             print("❌ \(scriptName) not running or stdin not available. Current state: \(state)")
             onComplete(.failure(.engineNotRunning))
@@ -138,17 +138,21 @@ class BaseScriptRunner: NSObject, PythonScriptRunner {
         isAbortedManually = false
 
         var payload: String
-        if let lora = loraPath {
-            // Если есть LoRA, создаем JSON
-            let jsonObject: [String: Any] = [
-                "prompt": data,
-                "lora_path": lora
-            ]
+        // JSON используется, если есть LoRA или контекстный эмбеддинг.
+        if loraPath != nil || contextEmbedding != nil {
+            var jsonObject: [String: Any] = ["prompt": data]
+            if let lora = loraPath {
+                jsonObject["lora_path"] = lora
+            }
+            if let embedding = contextEmbedding {
+                jsonObject["context_embedding"] = embedding
+            }
+
             if let jsonData = try? JSONSerialization.data(withJSONObject: jsonObject),
                let jsonString = String(data: jsonData, encoding: .utf8) {
                 payload = jsonString
             } else {
-                print("❌ Error creating JSON payload for LoRA.")
+                print("❌ Error creating JSON payload.")
                 onComplete(.failure(.promptEncodingError))
                 return
             }
@@ -157,7 +161,7 @@ class BaseScriptRunner: NSObject, PythonScriptRunner {
             payload = data
         }
 
-        print("➡️ Sending data to \(scriptName): \"\(payload.suffix(200))\"")
+        print("➡️ Sending data to \(scriptName): \"\(payload.prefix(200))\"")
         guard let inputData = (payload + "\n").data(using: .utf8) else {
             print("❌ Error encoding data to UTF-8.")
             currentCompletionCallback?(.failure(.promptEncodingError))

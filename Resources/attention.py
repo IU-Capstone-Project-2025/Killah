@@ -4,79 +4,115 @@ import json
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 
+
 def cosine_similarity_attention(target, histories):
     """
-    Вычисляет косинусное сходство между эмбеддингом target и каждым эмбеддингом в histories.
+    Computes cosine similarity between a target embedding and each embedding in histories.
     """
-    # Преобразуем входные данные в numpy массивы
     target_vector = np.array(target, dtype=np.float32).reshape(1, -1)
     histories_vectors = np.array(histories, dtype=np.float32)
-    
-    # Проверяем, что векторы не пустые и имеют одинаковую размерность
+
     if target_vector.shape[1] != histories_vectors.shape[1]:
         raise ValueError("Target and histories must have the same embedding dimension")
     if target_vector.size == 0 or histories_vectors.size == 0:
         raise ValueError("Empty vectors provided")
-    
-    # Вычисляем косинусное сходство
+
     similarities = cosine_similarity(target_vector, histories_vectors)
     return similarities[0].tolist()
 
-def normalize_attention_weights(similarities, top_n):
-    """
-    Нормализует значения внимания для топ-n документов так, чтобы минимальное было 0.1,
-    максимальное 1, а остальные пропорционально между ними.
-    Возвращает нормализованные веса и индексы топ-n документов.
-    """
-    if not similarities:
-        return [], []
 
-    # Сортируем индексы по убыванию сходства
-    indexed_similarities = list(enumerate(similarities))
-    indexed_similarities.sort(key=lambda x: x[1], reverse=True)
-    
-    # Выбираем топ-n индексов и значений
-    top_n = min(top_n, len(similarities))  # Убедимся, что не превышаем количество документов
-    top_indices = [index for index, _ in indexed_similarities[:top_n]]
-    top_similarities = [sim for _, sim in indexed_similarities[:top_n]]
-    
-    if not top_similarities:
+def select_top_documents(embeddings, similarities, top_n=5, threshold=0.5):
+    """
+    Select the best documents using both top_n selection and threshold filtering.
+    First selects top_n most similar documents, then applies threshold filtering.
+    Returns selected embeddings and their normalized weights.
+    """
+    if not similarities or not embeddings:
         return [], []
-
-    # Нормализация весов для топ-n документов
-    min_sim = min(top_similarities)
-    max_sim = max(top_similarities)
     
-    # Если все значения одинаковые (например, все нули)
+    # Sort by similarity in descending order
+    indexed_similarities = list(enumerate(zip(embeddings, similarities)))
+    indexed_similarities.sort(key=lambda x: x[1][1], reverse=True)
+    
+    # Select top_n documents
+    top_n = min(top_n, len(indexed_similarities))
+    top_items = indexed_similarities[:top_n]
+    
+    # Extract embeddings and similarities for top documents
+    top_embeddings = [item[1][0] for item in top_items]
+    top_similarities = [item[1][1] for item in top_items]
+    
+    # Apply threshold filtering
+    filtered_embeddings = []
+    filtered_similarities = []
+    for emb, sim in zip(top_embeddings, top_similarities):
+        if sim > threshold:
+            filtered_embeddings.append(emb)
+            filtered_similarities.append(sim)
+    
+    if not filtered_embeddings:
+        return [], []
+    
+    # Normalize weights to [0.1, 1.0] range for better combination
+    min_sim = min(filtered_similarities)
+    max_sim = max(filtered_similarities)
+    
     if max_sim == min_sim:
-        normalized = [1.0] * len(top_similarities)
+        normalized_weights = [1.0] * len(filtered_similarities)
     else:
-        # Нормализация к диапазону [0.1, 1]
-        normalized = [
+        normalized_weights = [
             0.1 + 0.9 * (sim - min_sim) / (max_sim - min_sim)
-            for sim in top_similarities
+            for sim in filtered_similarities
         ]
     
-    return normalized, top_indices
+    return filtered_embeddings, normalized_weights
+
+
+def combine_embeddings_weighted(embeddings, weights):
+    """
+    Combines embeddings using weighted average.
+    Returns None if no embeddings provided.
+    """
+    if not embeddings or not weights:
+        return None
+    
+    embeddings_array = np.array(embeddings, dtype=np.float32)
+    weights_array = np.array(weights, dtype=np.float32)
+    
+    # Weighted average
+    weighted_sum = np.average(embeddings_array, axis=0, weights=weights_array)
+    return weighted_sum.tolist()
+
 
 if __name__ == "__main__":
     print("READY", flush=True)
     while True:
         try:
-            input_data = input().strip()
-            if input_data:
-                data = json.loads(input_data)
-                target = data['target']  # Ожидаем список чисел [float]
-                histories = data['histories']  # Ожидаем список списков чисел [[float], [float], ...]
-                top_n = data.get('top_n', 5)  # По умолчанию выбираем 3 документа
-                similarities = cosine_similarity_attention(target, histories)
-                normalized_weights, top_indices = normalize_attention_weights(similarities, top_n)
-                result = {
-                    "weights": normalized_weights,
-                    "indices": top_indices
-                }
-                print(json.dumps(result), flush=True)
-                print("END", flush=True)
+            raw = input().strip()
+            if not raw:
+                continue
+
+            data = json.loads(raw)
+            target = data["target"]
+            histories = data["histories"]
+            threshold = data.get("threshold", 0.5)
+            top_n = data.get("top_n", 5)  # Default to top 5 documents
+            
+            # 1. Compute similarity scores
+            similarities = cosine_similarity_attention(target, histories)
+            
+            # 2. Select best documents using top_n and threshold
+            selected_embeddings, weights = select_top_documents(
+                histories, similarities, top_n, threshold
+            )
+            
+            # 3. Combine selected embeddings using weighted average
+            combined = combine_embeddings_weighted(selected_embeddings, weights)
+            
+            # 4. Return combined embedding (or null if none selected)
+            print(json.dumps({"combined_embedding": combined}), flush=True)
+            print("END", flush=True)
+            
         except EOFError:
             break
         except Exception as e:
