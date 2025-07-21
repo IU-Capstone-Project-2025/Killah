@@ -266,7 +266,7 @@ class AudioEngine: NSObject, ObservableObject, SFSpeechRecognizerDelegate {
                     print("File size: \(fileSize) bytes")
                     if fileSize > 44 { // WAV header ~44 bytes
                         self.audioFilePath = path // Restore path
-                        self.processAudioFileWithPython(generateEmbeddings: false)
+                        self.processAudioFileWithPython(generateEmbeddings: false) // SET FLAG FOR GENERATING EMBEDDINGS HERE
                     } else {
                         print("⚠️ Audio file is too small (likely empty): \(fileSize) bytes")
                     }
@@ -369,7 +369,7 @@ class AudioEngine: NSObject, ObservableObject, SFSpeechRecognizerDelegate {
             
             if self.llmEngine.getRunnerState(for: "audio") == .running {
                 // Pass generateEmbeddings parameter to Python script
-                let prompt = "\(audioFilePath.path)"
+                let prompt = "\(audioFilePath.path)|||\(generateEmbeddings)"
                 self.llmEngine.generateSuggestion(
                     for: "audio",
                     prompt: prompt,
@@ -385,7 +385,7 @@ class AudioEngine: NSObject, ObservableObject, SFSpeechRecognizerDelegate {
                             self.isProcessingAudio = false
                             switch result {
                             case .success(let resultJson):
-                                self.processAudioResult(resultJson, generateEmbeddings: generateEmbeddings)
+                                self.processAudioResult(resultJson)
                                 do {
                                     if FileManager.default.fileExists(atPath: audioFilePath.path) {
                                         try FileManager.default.removeItem(at: audioFilePath)
@@ -411,48 +411,43 @@ class AudioEngine: NSObject, ObservableObject, SFSpeechRecognizerDelegate {
         }
     }
     
-    private func processAudioResult(_ resultJson: String, generateEmbeddings: Bool) {
-        if !generateEmbeddings {
-            // Handle transcription directly
-            do {
-                if let data = resultJson.data(using: .utf8),
-                   let json = try JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
-                   let type = json["type"] as? String,
-                   type == "transcription",
-                   let text = json["text"] as? String {
-                    print("Received transcription: \(text)")
-                    self.onTranscriptionComplete?(text)
-                } else {
-                    print("Invalid transcription JSON format: \(resultJson)")
-                }
-            } catch {
-                print("Error parsing transcription JSON: \(error)")
+    private func processAudioResult(_ resultJson: String) {
+        do {
+            guard let data = resultJson.data(using: .utf8),
+                  let json = try JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
+                  let type = json["type"] as? String else {
+                print("Invalid JSON format: \(resultJson)")
+                return
             }
-        } else {
-            // Handle embeddings as before
-            llmEngine.startEngine(for: "caret")
-            let prompt = "\(resultJson)|||Transcribe this audio:"
-            llmEngine.generateSuggestion(
-                for: "caret",
-                prompt: prompt,
-                isFromCaret: true,
-                tokenStreamCallback: { token in
-                    DispatchQueue.main.async {
-                        print("Processed audio embedding token received: \(token)")
-                    }
-                },
-                onComplete: { [weak self] result in
-                    guard let self = self else { return }
-                    DispatchQueue.main.async {
-                        switch result {
-                        case .success(let text):
-                            self.onTranscriptionComplete?(text)
-                        case .failure(let error):
-                            print("Error processing embeddings: \(error)")
-                        }
-                    }
+
+            if type == "transcription" {
+                // Handle transcription: send plain text to autocomplete
+                guard let text = json["text"] as? String else {
+                    print("Invalid transcription JSON: missing 'text' field")
+                    return
                 }
-            )
+                print("Received transcription: \(text)")
+                self.onTranscriptionComplete?(text)
+            } else {
+                // Handle audio embeddings: create JSON with embeddings
+                guard let embeddings = json["embeddings"] as? [[Double]] else {
+                    print("Invalid embeddings JSON: missing or invalid 'embeddings' field")
+                    return
+                }
+                let audioEmbeddingsJson: [String: Any] = [
+                    "type": "projected_audio_embeds",
+                    "embeddings": embeddings,
+                ]
+                guard let jsonData = try? JSONSerialization.data(withJSONObject: audioEmbeddingsJson),
+                      let jsonString = String(data: jsonData, encoding: .utf8) else {
+                    print("❌ Failed to serialize embeddings JSON")
+                    return
+                }
+                print("Received embeddings: \(jsonString)")
+                self.onTranscriptionComplete?(jsonString)
+            }
+        } catch {
+            print("Error parsing JSON: \(error)")
         }
     }
 }
